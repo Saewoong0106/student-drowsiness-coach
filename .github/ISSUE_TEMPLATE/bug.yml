@@ -1,0 +1,26 @@
+name: 오류 신고
+description: 재현 상황과 예상 결과를 기록합니다.
+title: "[bug] 오류 요약"
+body:
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 재현 절차와 실제 결과
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 예상 결과
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 실행 환경
+      placeholder: "맥 모델, macOS, Python, 커밋 버전"
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 로그와 참고 자료
+      description: 얼굴 영상·비밀키·실제 개인정보를 올리지 마세요. 비식별 로그를 사용합니다.

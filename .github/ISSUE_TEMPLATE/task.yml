@@ -1,0 +1,42 @@
+name: 구현·조사 작업
+description: 담당자와 완료 조건을 정해 작업을 시작합니다.
+title: "[영역] 작업 제목"
+body:
+  - type: input
+    id: owner
+    attributes:
+      label: 담당자와 협업자
+      placeholder: "주 담당 1명 / 협업자"
+    validations:
+      required: true
+  - type: input
+    id: due
+    attributes:
+      label: 목표 완료일
+      placeholder: "YYYY-MM-DD"
+    validations:
+      required: true
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 목적과 작업 범위
+      description: 무엇을 해결하고 어떤 결과물을 만들지 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 선행 작업과 참고 자료
+      description: 먼저 필요한 이슈 번호, 입력 데이터, 문서 링크를 적어 주세요.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 조건
+      value: "- [ ] 결과물 작성\n- [ ] 실행 또는 검토 결과 기록\n- [ ] PR 또는 결과 링크 연결"
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 결과와 남은 문제
+      description: 작업하면서 PR·측정 결과·막힌 점을 갱신해 주세요.
