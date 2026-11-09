@@ -1,12 +1,45 @@
-name: 구현·조사 작업
-description: 담당자와 완료 조건을 정해 작업을 시작합니다.
-title: "[영역] 작업 제목"
+name: 작업 요청
+description: 기능·문서·조사·평가 작업의 담당과 완료 조건을 정합니다.
+title: "[feat][영역] 작업 요약"
 body:
+  - type: markdown
+    attributes:
+      value: |
+        제목은 `[유형][영역] 작업 요약`으로 맞춰 주세요.
+        드롭다운은 제목·라벨·Assignee를 자동 변경하지 않습니다.
+        이름 예시와 작업 절차는 CONTRIBUTING.md를 참고하세요.
+  - type: dropdown
+    id: work_type
+    attributes:
+      label: 작업 유형
+      options:
+        - feat
+        - fix
+        - docs
+        - refactor
+        - test
+        - chore
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 담당 영역
+      options:
+        - vision
+        - detection
+        - app
+        - llm
+        - data
+        - integration
+        - planning
+    validations:
+      required: true
   - type: input
     id: owner
     attributes:
-      label: 담당자와 협업자
-      placeholder: "주 담당 1명 / 협업자"
+      label: 책임자와 협업자
+      placeholder: "책임자 1명 / 협업자 (실제 Assignee도 지정)"
     validations:
       required: true
   - type: input
@@ -16,27 +49,47 @@ body:
       placeholder: "YYYY-MM-DD"
     validations:
       required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 대상 환경
+      options:
+        - Mac과 Windows 공통
+        - Mac
+        - Windows
+        - 실행 환경과 무관한 문서·계획 작업
+    validations:
+      required: true
   - type: textarea
     id: purpose
     attributes:
       label: 목적과 작업 범위
-      description: 무엇을 해결하고 어떤 결과물을 만들지 적어 주세요.
+      description: 해결할 문제와 결과물을 적습니다. 범위가 크면 별도 이슈로 나눕니다.
+      placeholder: "목적 / 이번에 바꿀 것 / 후속 작업으로 남길 것"
     validations:
       required: true
   - type: textarea
     id: dependencies
     attributes:
       label: 선행 작업과 참고 자료
-      description: 먼저 필요한 이슈 번호, 입력 데이터, 문서 링크를 적어 주세요.
+      description: 먼저 필요한 이슈·PR과 입력 자료를 적습니다. 없으면 없다고 적습니다.
+      placeholder: "선행 이슈 #번호 / 선행 PR #번호 / 문서·데이터 링크 또는 없음"
+    validations:
+      required: true
   - type: textarea
     id: acceptance
     attributes:
       label: 완료 조건
-      value: "- [ ] 결과물 작성\n- [ ] 실행 또는 검토 결과 기록\n- [ ] PR 또는 결과 링크 연결"
+      description: 다른 팀원이 확인할 동작·결과물과 확인 방법을 체크리스트로 적습니다.
+      value: |
+        - [ ] 확인할 동작 또는 결과물:
+        - [ ] 검증 방법과 예상 결과:
+        - [ ] 결과 PR·문서·실험 기록 연결
     validations:
       required: true
   - type: textarea
     id: outcome
     attributes:
       label: 결과와 남은 문제
-      description: 작업하면서 PR·측정 결과·막힌 점을 갱신해 주세요.
+      description: 작업 중 결과 링크·확인 환경·막힌 점·다음 행동을 갱신합니다.
+      placeholder: "결과 PR / 확인 결과 / 남은 문제와 다음 행동"
