@@ -16,7 +16,7 @@ Windows x86-64·Python 3.11 대상 패키지의 의존성 해결과 배포 파�
 | 한글·공백이 있는 모델 경로 | Mac에서 실제 모델 로드·추론 성공 |
 | Windows 패키지 | x86-64·Python 3.11 배포 파일·의존성 해결 확인 |
 | Windows 실제 카메라·소리·글꼴·실행 파일 | 미검증 |
-| GitHub Actions의 Mac·Windows 검사 | 설정 추가, 아직 실행 전 |
+| GitHub Actions의 Mac·Windows 검사 | [Actions](https://github.com/Saewoong0106/student-drowsiness-coach/actions)에서 해당 커밋의 실행 결과 확인. 실제 카메라·소리 청취는 별도 시험 |
 
 ## 처음 한 번 설치
 
