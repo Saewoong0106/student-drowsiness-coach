@@ -6,8 +6,11 @@
 
 ## 먼저 읽을 자료
 
+Mac·Windows 공통 실행을 위한 설치·시작 파일을 준비했습니다. Windows는 설치 후 `start_study.bat`, Mac은 `공부_시작.command`를 실행합니다. [운영체제별 설치·실행 안내](docs/cross-platform.md)를 먼저 확인하세요. Windows 실제 카메라·소리 시험은 남아 있습니다.
+
 | 자료 | 내용 |
 |---|---|
+| [Mac·Windows 실행](docs/cross-platform.md) | 운영체제별 설치, 실행 파일, 소리·글꼴 차이와 검증 범위 |
 | [공부 세션 안내](docs/study-session.md) | 보정, 눈 감김 알림, 휴식, 기록 조회·내보내기 |
 | [공부 세션 검증](docs/study-session-validation.md) | 자동 검사·실행 확인 결과와 남은 현장 시험 |
 | [첫 실행 안내](docs/first-run.md) | 카메라 실행, 오늘의 확인 항목, 문제 해결 |

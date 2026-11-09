@@ -61,7 +61,7 @@ def run(args):
     vision = mp.tasks.vision
     try:
         options = vision.FaceLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(args.model)),
+            base_options=mp.tasks.BaseOptions(model_asset_buffer=args.model.read_bytes()),
             running_mode=vision.RunningMode.VIDEO, num_faces=1,
             min_face_detection_confidence=0.5, min_face_presence_confidence=0.5,
             min_tracking_confidence=0.5,

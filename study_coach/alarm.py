@@ -9,6 +9,7 @@ class Alarm:
     def __init__(self, muted=False):
         self.muted = muted
         self.process = None
+        self.windows_sound = None
         self.error = None
 
     def ring(self):
@@ -19,14 +20,24 @@ class Alarm:
             return
         sound = Path("/System/Library/Sounds/Glass.aiff")
         try:
-            if sys.platform == "darwin" and sound.is_file():
+            if sys.platform == "win32":
+                import winsound
+
+                winsound.PlaySound(
+                    "SystemExclamation",
+                    winsound.SND_ALIAS | winsound.SND_ASYNC | winsound.SND_NOSTOP,
+                )
+                self.windows_sound = winsound
+                self.error = None
+            elif sys.platform == "darwin" and sound.is_file():
                 self.process = subprocess.Popen(
                     ["/usr/bin/afplay", "-v", "0.4", str(sound)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
+                self.error = None
             else:
                 self.error = "이 환경에서는 소리 재생을 지원하지 않습니다. 화면 알림을 확인하세요."
-        except OSError as exc:
+        except (ImportError, OSError, RuntimeError) as exc:
             self.error = str(exc)
 
     def check(self):
@@ -38,6 +49,12 @@ class Alarm:
                 self.process = None
 
     def close(self):
+        if self.windows_sound is not None:
+            try:
+                self.windows_sound.PlaySound(None, 0)
+            except (OSError, RuntimeError) as exc:
+                self.error = str(exc)
+            self.windows_sound = None
         if self.process is not None:
             if self.process.poll() is None:
                 self.process.terminate()

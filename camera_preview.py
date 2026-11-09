@@ -62,14 +62,14 @@ def run(args):
     except ImportError as exc:
         raise RuntimeError("필요한 라이브러리가 없습니다. docs/first-run.md의 설치 절차를 확인하세요.") from exc
     if not args.model.is_file():
-        raise RuntimeError("얼굴 모델이 없습니다. .venv/bin/python scripts/download_model.py 를 실행하세요.")
+        raise RuntimeError("얼굴 모델이 없습니다. 가상환경의 Python으로 scripts/download_model.py를 실행하세요. docs/cross-platform.md를 확인하세요.")
     source_path = args.image or args.video
     if source_path and not source_path.is_file():
         raise RuntimeError(f"입력 파일을 찾을 수 없습니다: {source_path}")
 
     vision = mp.tasks.vision
     options = vision.FaceLandmarkerOptions(
-        base_options=mp.tasks.BaseOptions(model_asset_path=str(args.model)),
+        base_options=mp.tasks.BaseOptions(model_asset_buffer=args.model.read_bytes()),
         running_mode=vision.RunningMode.IMAGE if args.image else vision.RunningMode.VIDEO,
         num_faces=1,
         min_face_detection_confidence=0.5,

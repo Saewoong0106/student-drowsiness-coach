@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -58,6 +59,17 @@ class PreviewTests(unittest.TestCase):
         result = self.invoke("--headless")
         self.assertEqual(result.returncode, 2)
         self.assertIn("--max-frames", result.stderr)
+
+    def test_model_loads_from_path_with_korean_and_spaces(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            model = root / "한글 model" / "face.task"
+            model.parent.mkdir()
+            shutil.copyfile(ROOT / "models" / "face_landmarker.task", model)
+            image = root / "blank.png"
+            self.assertTrue(cv2.imwrite(str(image), np.zeros((480, 640, 3), dtype=np.uint8)))
+            result = self.summary(self.invoke("--image", image, "--model", model, "--headless"))
+            self.assertEqual(result["frames_with_face"], 0)
 
 
 if __name__ == "__main__":

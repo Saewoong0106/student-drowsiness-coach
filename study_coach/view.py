@@ -1,6 +1,8 @@
 """Korean preview panel below the camera, without covering the eyes."""
 
+import os
 from pathlib import Path
+import sys
 
 import cv2
 import numpy as np
@@ -14,12 +16,26 @@ def duration(seconds):
     return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
 
+def load_fonts():
+    """Use a system Korean font, falling back to English if it cannot load."""
+    candidates = []
+    if sys.platform == "darwin":
+        candidates.append(Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"))
+    elif sys.platform == "win32":
+        windows = Path(os.environ.get("WINDIR", r"C:\Windows"))
+        candidates.append(windows / "Fonts" / "malgun.ttf")
+    for font in candidates:
+        if font.is_file():
+            try:
+                return True, ImageFont.truetype(str(font), 27), ImageFont.truetype(str(font), 19)
+            except OSError:
+                continue
+    return False, ImageFont.load_default(size=24), ImageFont.load_default(size=17)
+
+
 class SessionView:
     def __init__(self):
-        font = Path("/System/Library/Fonts/AppleSDGothicNeo.ttc")
-        self.korean = font.is_file()
-        self.large = ImageFont.truetype(str(font), 27) if self.korean else ImageFont.load_default(size=24)
-        self.small = ImageFont.truetype(str(font), 19) if self.korean else ImageFont.load_default(size=17)
+        self.korean, self.large, self.small = load_fonts()
 
     def draw(self, frame, landmarks, measurement, session, alarm, fps, mirror=True):
         frame = frame.copy()
