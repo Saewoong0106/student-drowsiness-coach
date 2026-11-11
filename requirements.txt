@@ -1,0 +1,8 @@
+# Shared runtime for Python 3.11 on macOS Apple Silicon and Windows x86-64.
+# macOS full environment snapshot: requirements-macos.txt.
+# Windows runtime and hardware checks: docs/cross-platform.md.
+# Install only this OpenCV distribution (not opencv-python/headless alongside it).
+mediapipe==1.2.2
+numpy==2.4.6
+opencv-contrib-python==5.0.0.93
+pillow==13.0.0
