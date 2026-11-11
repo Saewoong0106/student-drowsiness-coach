@@ -37,12 +37,13 @@ def main():
         print(f"보정 {summary['setup_seconds']:.1f}초 / 공부 {summary['study_seconds']:.1f}초 / 휴식 {summary['break_seconds']:.1f}초")
         print(f"관측 {summary['observable_seconds']:.1f}초 / 미측정 {summary['unobservable_seconds']:.1f}초")
         print(f"졸음 의심 {summary['eye_closure_count']}회 / 누적 {summary['eye_closure_seconds']:.1f}초")
+        print(f"고개 숙임 {summary.get('head_down_count', 0)}회 / 누적 {summary.get('head_down_seconds', 0.0):.1f}초")
         ratio = summary['eye_closure_ratio']
         print("관측 시간 대비 눈 감김: " + ("측정 불가" if ratio is None else f"{ratio * 100:.1f}%"))
         if summary['status'] == 'running':
             print("진행 중 또는 비정상 종료 전 저장된 임시 기록입니다. 확정 결과로 해석하지 마세요.")
         for event in events:
-            print(f"  이벤트: 시작 {event['condition_started_s']:.2f} / 확정 {event['confirmed_s']:.2f} / 종료 {event['ended_s']} / 중단 {event['interrupted_reason']}")
+            print(f"  이벤트({event.get('type', 'eye_closure_suspected')}): 시작 {event['condition_started_s']:.2f} / 확정 {event['confirmed_s']:.2f} / 종료 {event['ended_s']} / 중단 {event['interrupted_reason']}")
         if args.export:
             for path in store.export(summary['session_id'], args.export):
                 print(f"내보내기: {path}")

@@ -9,7 +9,7 @@ import sys
 import time
 
 from study_coach.alarm import Alarm
-from study_coach.eyes import EyeMeasurement, measure_eyes
+from study_coach.eyes import EyeMeasurement, measure_eyes, measure_frame
 from study_coach.session import Settings, StudySession
 from study_coach.storage import SessionStore
 
@@ -36,7 +36,7 @@ def arguments():
     return args
 
 
-def run(args):
+def run(args, pose_measurer=None):
     cache = ROOT / ".cache" / "matplotlib"
     cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("MPLCONFIGDIR", str(cache))
@@ -131,11 +131,21 @@ def run(args):
                 image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 result = model.detect_for_video(image, timestamp_ms)
                 landmarks = result.face_landmarks[0] if result.face_landmarks else []
-                measurement = measure_eyes(landmarks, frame.shape[1], frame.shape[0])
-                new_event = session.step(current_t, measurement.average)
+                measurement = measure_frame(
+                    session.session_id,
+                    current_t,
+                    landmarks,
+                    frame.shape[1],
+                    frame.shape[0],
+                    pose_measurer=pose_measurer or session.pose_measurer,
+                )
+                new_event = session.step_measurement(measurement)
                 if new_event:
                     alarm.ring()
-                    print(f"졸음 의심 이벤트 {len(session.detector.events)}회 · {current_t:.2f}초", flush=True)
+                    if session.last_triggered.get("eye_closure_suspected"):
+                        print(f"졸음 의심 이벤트 {len(session.detector.events)}회 · {current_t:.2f}초", flush=True)
+                    if session.last_triggered.get("head_down"):
+                        print(f"고개 숙임 이벤트 {len(session.head_detector.events)}회 · {current_t:.2f}초", flush=True)
                 alarm.check()
                 frame_count += 1
                 if new_event or now - last_save >= 1:
