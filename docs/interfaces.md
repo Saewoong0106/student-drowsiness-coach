@@ -2,7 +2,7 @@
 
 초기 제안 v0.1입니다. 실제 구현 전 담당자들이 확인하고 변경 사항은 PR로 함께 수정합니다. 시간 단위는 초, 각도는 도, 비율은 0~1로 통일합니다. 화면에서만 분·퍼센트로 바꿉니다.
 
-현재 눈 감김 시제품은 이 약속의 일부를 구현했습니다. `study_coach/eyes.py`의 `EyeMeasurement`는 양쪽 EAR와 실패 사유를 전달하고, 시간·세션 식별자는 실행 루프에서 관리합니다. 이벤트는 `eye_closure_suspected`만 저장하며 설정 버전은 세션의 `settings.version`에 있습니다. 휴식·미측정은 누적 시간으로 저장합니다. 고개 각도·고개 숙임 이벤트·시간창 통계·코칭 출력은 미구현입니다. 따라서 아래의 전체 규격이 모두 지원된다고 가정하면 안 됩니다.
+현재 `study_coach/contracts.py`와 `study_coach/session.py`에 `FrameMeasurement`, `Event`, `SessionSummary`(`TimeWindow`), `CoachingResult` 데이터 계약과 눈 감김(2초 진입·1초 회복)·고개 숙임(`pitch_delta_deg` 20도 이상 3초 진입·15도 미만 1초 회복) 판정 로직 및 고개 각도 입력 인터페이스(`measure_frame`, `StudySession.step_measurement`)가 구현되어 있습니다. 영상에서 실제 고개 각도를 추출하는 측정 모듈(#4)과 KoGPT2 코칭 생성기(#8)는 후속 단계에서 이 인터페이스에 연결합니다.
 
 ## 영상 측정 담당이 판정 담당에게 전달
 

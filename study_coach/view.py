@@ -55,16 +55,19 @@ class SessionView:
         draw = ImageDraw.Draw(image)
         y = frame.shape[0] + 12
         state = session.state
-        label = {
+        labels = {
             "calibrating": "보정 중 · 눈을 뜨고 정면을 봐 주세요",
             "paused": "휴식 중 · Space를 누르면 공부 재개",
             "normal": "정상 관측",
             "closing": "눈 감김 확인 중",
             "eyes_closed": "졸음 의심 · 눈 감김 2초 이상",
-            "recovering": "눈 뜸 회복 확인 중",
+            "bending": "고개 숙임 확인 중",
+            "head_down": "고개 숙임 · 3초 이상 지속",
+            "recovering": "눈·자세 회복 확인 중",
             "unobservable": "측정 불가 · 얼굴과 눈을 확인해 주세요",
-        }[state] if self.korean else state.replace("_", " ").title()
-        color = (255, 120, 105) if state == "eyes_closed" else (130, 225, 170)
+        }
+        label = labels.get(state, state.replace("_", " ").title()) if self.korean else state.replace("_", " ").title()
+        color = (255, 120, 105) if state in ("eyes_closed", "head_down") else (130, 225, 170)
         draw.text((18, y), label, font=self.large, fill=color)
         snapshot = session.snapshot()
         t = session.last_time or 0
@@ -88,9 +91,17 @@ class SessionView:
         if not self.korean:
             details = f"EAR {value} | Baseline {baseline} | Relative {ratio} | {fps:.1f} FPS"
         draw.text((18, y + 76), details, font=self.small, fill=(235, 235, 235))
-        info = f"졸음 의심 {snapshot['eye_closure_count']}회 · 눈 감김 {snapshot['eye_closure_seconds']:.1f}초 · 소리 {'끔' if alarm.muted else '켬'}"
+        head_count = snapshot.get("head_down_count", 0)
+        head_seconds = snapshot.get("head_down_seconds", 0.0)
+        info = (
+            f"졸음 의심 {snapshot['eye_closure_count']}회({snapshot['eye_closure_seconds']:.1f}초) · "
+            f"고개 숙임 {head_count}회({head_seconds:.1f}초) · 소리 {'끔' if alarm.muted else '켬'}"
+        )
         if not self.korean:
-            info = f"Events {snapshot['eye_closure_count']} | Closed {snapshot['eye_closure_seconds']:.1f}s | Sound {'off' if alarm.muted else 'on'}"
+            info = (
+                f"Eyes {snapshot['eye_closure_count']} ({snapshot['eye_closure_seconds']:.1f}s) | "
+                f"Head {head_count} ({head_seconds:.1f}s) | Sound {'off' if alarm.muted else 'on'}"
+            )
         draw.text((18, y + 109), info, font=self.small, fill=(235, 235, 235))
         controls = "Space 휴식/재개   C 재보정   M 소리   Q/Esc 종료·저장" if self.korean else "Space: pause | C: recalibrate | M: mute | Q/Esc: save & quit"
         draw.text((18, y + 148), controls, font=self.small, fill=(180, 200, 225))
