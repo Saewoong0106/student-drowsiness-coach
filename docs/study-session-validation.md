@@ -32,6 +32,28 @@ MacBook 카메라에서 새 공부 프로그램을 실행했습니다. 보정 �
 
 한국어 상태·숫자·키 안내는 카메라 영상 대신 단색 배경을 넣은 화면 렌더링으로 잘림 없이 표시되는지 확인했습니다. 실제 얼굴 이미지는 저장하지 않았습니다.
 
+## 2026-11-13 Mac 실기기 및 코칭·학습 파이프라인 확인
+
+검증일: 2026-11-13. 환경: Apple Silicon Mac, Python 3.11.9 (`.venv`), 브랜치 `feat/8-coaching-lora-pipeline`.
+
+### 확인 완료 항목
+
+- **Python 및 자동 검사 (64개 통과):** `.venv/bin/python -m unittest discover -s tests -v` 실행 결과 기존 54개 + 코칭·데이터 분할·LoRA 파이프라인·계약 연동 10개 포함 총 64개 자동 검사가 모두 통과했습니다.
+- **데이터 계약 및 모듈 연동 확인 (#21):** `scripts/check_training_env.py`로 OS·Python·패키지 버전 및 `FrameMeasurement` → `Event` → `SessionSummary` → `CoachingResult` 3담당 모듈 간 입출력 호환(`contracts_verified=true`)을 확인했습니다.
+- **코칭 시드 데이터 검증 및 그룹 분할 (#7):** `scripts/coaching_dataset.py`로 합성 시드 데이터 48건(`source="synthetic_seed"`, `reviewed=False`) 무결성 검증 및 `group_id` 단위 분할(`train=16, val=16, test=16`, 그룹 누수 0건)을 확인했습니다.
+- **KoGPT2 LoRA 학습 파이프라인 드라이런 및 모의 비교 평가 (#8):** `scripts/train_coaching_lora.py --dry-run` 및 `scripts/evaluate_coaching.py --mock-models`로 프롬프트 손실 마스킹(`labels=-100`), 모의 어댑터 저장·재로딩, 수치 불일치/금지 표현 검출 및 규칙 기반 대체 응답(`is_fallback=True`), 블라인드 평가표 생성 흐름을 확인했습니다.
+- **규칙 기반 한국어 코칭 문장 생성 (#8):** `study_coach/coaching.py`에서 8가지 시나리오별 사실 요약·조심스러운 해석·다음 행동 제안 문장 생성과 수치 검증 통과를 확인했습니다.
+- **실제 Mac 웹캠·알림음·DB 저장 확인:** Mac 웹캠으로 `study_session.py`를 실제 실행하여 눈 감김 감지 및 경고음 정상 작동, 실제 공부 세션 3건의 SQLite 저장(`data/private/study.sqlite3`) 및 `session_report.py` 조회를 확인했습니다.
+
+> **주의 (실제 AI 성능과 구분):** 위의 드라이런·모의 모델 비교·합성 데이터 검증은 **코드 및 파이프라인 동작 확인 결과이며, 실제 미세 튜닝된 AI 모델의 품질이나 감지 정확도(F1·오경보율) 실측 성능이 아닙니다.**
+
+### 아직 완료·검증하지 않은 항목
+
+- 실제 고개 숙임 각도(`pitch_delta_deg`) 비전 측정 및 웹캠 연동 (#22, 김수연 담당)
+- 사람이 검수한 코칭 데이터셋 구축 및 실제 `KoGPT2` LoRA 가중치 본 학습 (#7·#8)
+- 실제 공부 세션 종료 후 코칭 결과 자동 저장·화면 표시 연결 (#23, 김수현 담당)
+- Windows 실기기(카메라·알림음·한글 폰트·키 조작) 실행 검증 (#23)
+
 ## 다음 수동 시험표
 
 각 항목은 눈을 뜬 정면 자세로 보정을 끝낸 뒤 실행합니다. 실측 결과가 생기면 아래 상태를 갱신하세요.
