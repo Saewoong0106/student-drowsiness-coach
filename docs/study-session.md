@@ -54,7 +54,53 @@
 .venv/bin/python session_report.py --session 세션ID --export data/private/export
 ```
 
-내보내기는 세션 요약 JSON과 이벤트 CSV를 만듭니다. CSV는 한글을 읽기 쉬운 UTF-8 BOM 형식입니다. 종료되지 않은 이벤트는 종료 시각이 비어 있습니다. 회복 확인 중 표시되는 누적 시간은 임시 값이며, 회복 확인 뒤 실제 회복 시작 시각으로 정정됩니다.
+내보내기는 세션 요약 JSON(`summary`, `events`, 코칭 저장 시 `coaching` 포함)과 이벤트 CSV를 만듭니다. CSV는 한글을 읽기 쉬운 UTF-8 BOM 형식입니다. 종료되지 않은 이벤트는 종료 시각이 비어 있습니다. 회복 확인 중 표시되는 누적 시간은 임시 값이며, 회복 확인 뒤 실제 회복 시작 시각으로 정정됩니다.
+
+## 코칭 추론 모듈 및 KoGPT2 LoRA 학습 파이프라인 (#21 · #7 · #8)
+
+`study_coach/coaching.py`의 `generate_coaching_for_session(summary, mode="rule"|"kogpt2"|"lora")`는 `SessionSummary` 사본을 입력받아 `CoachingResult`를 반환하며, 앱·화면 통합(#23)에서 `SessionStore.save_coaching()`과 연결해 사용합니다. 모델 가중치가 없거나 출력 수치 검증에 실패하면 원출력(`raw_text`)과 실패 사유(`validation_errors`)를 보존한 채 규칙 기반 대체 안내(`is_fallback=True`)로 자동 복구합니다.
+
+KoGPT2 기본 모델 또는 LoRA 미세 튜닝 모델을 학습·추론하려면 추가 패키지를 설치합니다:
+
+```sh
+# Mac
+.venv/bin/python -m pip install torch transformers peft
+
+# Windows (PowerShell)
+.\.venv\Scripts\python.exe -m pip install torch transformers peft
+```
+
+```sh
+# 1. 학습 장치(MPS/CUDA/CPU) 및 3담당 모듈 데이터 계약 연동 확인 (#21)
+.venv/bin/python scripts/check_training_env.py
+
+# 2. 소량 시드 데이터(48건, synthetic_seed / reviewed=False) 생성·검증·그룹 단위 분할 (#7)
+.venv/bin/python scripts/coaching_dataset.py \
+  --generate-seed data/coaching_seed.jsonl \
+  --validate data/coaching_seed.jsonl \
+  --split data/coaching_seed.jsonl \
+  --output-dir data/private/splits
+
+# 3. 학습 파이프라인 드라이런 검증 (가중치 다운로드 없이 손실 마스킹·저장·재로딩 확인, #8)
+.venv/bin/python scripts/train_coaching_lora.py \
+  --data data/coaching_seed.jsonl \
+  --output-dir models/kogpt2-coaching-lora \
+  --dry-run
+
+# 4. 실제 검수 완료 데이터로 KoGPT2 LoRA 본 학습 실행 시 (#8)
+.venv/bin/python scripts/train_coaching_lora.py \
+  --train-file data/private/splits/train.jsonl \
+  --val-file data/private/splits/val.jsonl \
+  --output-dir models/kogpt2-coaching-lora \
+  --require-reviewed
+
+# 5. 기본 모델 vs LoRA 튜닝 모델 vs 규칙 기반 코칭 비교 출력 및 블라인드 평가표 생성 (#8 · #12)
+.venv/bin/python scripts/evaluate_coaching.py \
+  --test-file data/private/splits/test.jsonl \
+  --lora-path models/kogpt2-coaching-lora \
+  --output-dir data/private/eval \
+  --mock-models
+```
 
 공개 영상도 같은 코드로 분석할 수 있습니다. 영상 분석은 음소거이며 실제 처리 속도 대신 영상 재생 시간을 사용합니다.
 
