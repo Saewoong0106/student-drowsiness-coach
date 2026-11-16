@@ -40,6 +40,7 @@ MacBook 카메라에서 새 공부 프로그램을 실행했습니다. 보정 �
 
 - **Python 및 자동 검사 (64개 통과):** `.venv/bin/python -m unittest discover -s tests -v` 실행 결과 기존 54개 + 코칭·데이터 분할·LoRA 파이프라인·계약 연동 10개 포함 총 64개 자동 검사가 모두 통과했습니다.
 - **데이터 계약 및 모듈 연동 확인 (#21):** `scripts/check_training_env.py`로 OS·Python·패키지 버전 및 `FrameMeasurement` → `Event` → `SessionSummary` → `CoachingResult` 3담당 모듈 간 입출력 호환(`contracts_verified=true`)을 확인했습니다.
+- **PyTorch MPS 학습 장치 및 LLM 패키지 호환성 확인 (#21, 2026-11-16):** `.venv`에 `torch 2.15.0`, `transformers 5.23.0`, `peft 0.21.3`(`accelerate 1.15.0`)을 설치한 뒤 `pip check` 무충돌, `mps_built=true`, `mps_available=true`, `selected_training_device="mps"` 및 자동 검사 64개 전체 통과를 확인했습니다. #8 KoGPT2 LoRA 소량·본 학습의 실행 장치는 Apple Silicon `mps`로 확정했습니다.
 - **코칭 시드 데이터 검증 및 그룹 분할 (#7):** `scripts/coaching_dataset.py`로 합성 시드 데이터 48건(`source="synthetic_seed"`, `reviewed=False`) 무결성 검증 및 `group_id` 단위 분할(`train=16, val=16, test=16`, 그룹 누수 0건)을 확인했습니다.
 - **KoGPT2 LoRA 학습 파이프라인 드라이런 및 모의 비교 평가 (#8):** `scripts/train_coaching_lora.py --dry-run` 및 `scripts/evaluate_coaching.py --mock-models`로 프롬프트 손실 마스킹(`labels=-100`), 모의 어댑터 저장·재로딩, 수치 불일치/금지 표현 검출 및 규칙 기반 대체 응답(`is_fallback=True`), 블라인드 평가표 생성 흐름을 확인했습니다.
 - **규칙 기반 한국어 코칭 문장 생성 (#8):** `study_coach/coaching.py`에서 8가지 시나리오별 사실 요약·조심스러운 해석·다음 행동 제안 문장 생성과 수치 검증 통과를 확인했습니다.
