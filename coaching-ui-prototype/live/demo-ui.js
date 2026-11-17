@@ -1,0 +1,18 @@
+/* Display synthetic sessions only when the authenticated API marks them as demo. */
+function renderDemoReport(row) {
+  const s=row.demo;
+  const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const time=seconds=>`${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`;
+  const types={eye_closure_suspected:'눈 감김 의심',head_down:'고개 숙임',unobservable:'미측정',break:'휴식'};
+  const count=type=>s.events.filter(e=>e.type===type).length;
+  const labels={pending:'대기',running:'생성 중',succeeded:'완료',failed:'실패'};
+  const label=s.is_fallback?'대체 안내':labels[s.status];
+  let body;
+  if(s.status==='succeeded'||s.is_fallback){
+    body=`${s.is_fallback?'<div class="alert">모델 검증 실패를 가정한 규칙 기반 대체 안내 예시입니다.</div>':''}<p class="coach-kicker">SYNTHETIC COACHING EXAMPLE</p><h3 class="coach-lead">${esc(s.lead)}</h3><p class="coach-facts">${esc(s.fact)}</p><div class="plan"><div><div class="plan-title">다음 공부를 위한 제안</div><div class="plan-copy">${esc(s.suggestion)}</div></div><div class="plan-numbers"><strong>${s.plan[0]}</strong><span>분 공부</span><span class="plus">+</span><strong>${s.plan[1]}</strong><span>분 휴식</span></div></div>`;
+  }else{
+    const message={pending:'가상 코칭을 생성할 준비가 되었어요.',running:'코칭 생성 중 상태를 시연하고 있어요.',failed:'코칭 생성 실패를 가정한 화면이에요.'}[s.status];
+    body=`<div class="state-empty"><h3>${message}</h3><p>버튼으로 상태 전환을 시연합니다. 실제 AI 모델을 실행하지 않습니다.</p><button class="primary" data-demo-action="generate">${s.status==='running'?'완료 상태로 보기':s.status==='failed'?'가상 생성 다시 시도':'가상 코칭 생성'}</button>${s.status==='failed'?' <button class="secondary" data-demo-action="fallback">대체 안내 보기</button>':''}</div>`;
+  }
+  return `<div class="demo-notice"><span class="notice-icon">i</span><span><strong>가상 실험 기록</strong> · 발표·화면 시연용 데이터입니다. 실제 공부·감지·AI 생성 결과가 아닙니다.</span></div><section class="panel"><div class="detail-header"><div><div class="overline">DEMO SESSION / ${esc(row.id)}</div><h2 class="detail-title">${esc(s.title)}</h2><div class="detail-meta">${esc(s.date)} · ${esc(s.time)} · 종료된 가상 세션</div></div><span class="badge fallback">가상 기록</span></div><div class="metrics"><div class="metric"><div class="metric-label">공부 시간</div><div class="metric-value">${s.study/60}<small>분</small></div></div><div class="metric"><div class="metric-label">휴식 시간</div><div class="metric-value">${s.rest/60}<small>분</small></div></div><div class="metric orange"><div class="metric-label">눈 감김 의심</div><div class="metric-value">${count('eye_closure_suspected')}<small>회</small></div></div><div class="metric"><div class="metric-label">고개 숙임</div><div class="metric-value">${count('head_down')}<small>회</small></div></div></div><div class="observation">관측 가능 ${time(s.study-s.unobservable)} · 미측정 ${s.unobservable}초 · 모두 가상 통계</div></section><section class="panel coaching-panel"><div class="coaching-heading"><div class="coaching-title"><span class="sparkle">✧</span><h2>가상 학습 코칭</h2></div><span class="badge ${s.is_fallback?'fallback':s.status}">${label}</span></div><div class="coaching-body">${body}<p class="coach-footnote">문구와 공부·휴식 제안은 작성된 예시입니다. 실제 모델 미실행.</p></div></section><section class="panel"><div class="panel-heading"><h2>가상 이벤트 기록</h2><span class="tiny-label">${s.events.length}건</span></div><div class="records-body"><table><thead><tr><th scope="col">시작</th><th scope="col">이벤트</th><th scope="col">지속</th></tr></thead><tbody>${s.events.map(e=>`<tr><td>${time(e.condition_started_s)}</td><td>${types[e.type]}</td><td>${e.ended_s-e.condition_started_s}초</td></tr>`).join('')}</tbody></table><p class="record-note">고개 숙임·미측정은 눈 감김 의심과 별도로 기록합니다.</p></div></section>`;
+}

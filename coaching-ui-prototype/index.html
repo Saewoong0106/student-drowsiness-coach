@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#153f3b">
+  <title>Study Loop · 학습 기록과 코칭</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="./index.html"><span class="brand-mark">s<span>l</span></span><span>study loop<small>학생 졸음 감지 · 학습 코칭</small></span></a>
+    <div class="workspace-label">MY WORKSPACE</div>
+    <div class="nav-current"><span aria-hidden="true">▦</span> 학습 기록 <span class="nav-count">6</span></div>
+    <div class="sidebar-note"><span class="small-dot"></span> 기록에서 다음 공부로<p>눈 감김과 자세를 구분하고,<br>나에게 맞는 휴식 계획을 찾아요.</p></div>
+    <div class="sidebar-bottom"><div class="avatar">2</div><div>임베디드 시스템 2조<small>학습 코칭 대시보드</small></div></div>
+  </aside>
+  <main>
+    <header class="topbar"><span>내 학습 공간 <span class="slash">/</span> <strong>학습 기록</strong></span><span class="demo-badge"><span class="small-dot"></span> 가상 데이터 시연</span></header>
+    <div class="page">
+      <div class="page-heading"><div><p class="eyebrow">YOUR STUDY, AT A GLANCE</p><h1>오늘의 기록, 다음 공부의 힌트</h1><p class="subtitle">공부의 흐름을 돌아보고, 다음 세션을 조금 더 편안하게 준비하세요.</p></div><span class="date-label">2026년 11월 17일 · 화요일</span></div>
+      <div class="demo-notice"><span class="notice-icon">i</span><span><strong>화면 구성 확인용 프로토타입입니다.</strong> 모든 기록과 코칭은 가상 예시이며, 카메라·DB·실제 AI 모델과 연결되지 않았습니다.</span></div>
+      <section class="overview" aria-label="가상 기록 전체 요약" id="overview"></section>
+      <div class="workspace">
+        <section class="session-panel panel" aria-labelledby="sessions-heading">
+          <div class="panel-heading"><h2 id="sessions-heading">세션 목록 <span class="muted-count">6</span></h2><span class="tiny-label">최근순</span></div>
+          <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="세션 이름 또는 ID 검색" aria-label="세션 이름 또는 ID 검색"></label>
+          <label class="filter-label">코칭 상태 <select id="filter"><option value="all">전체 상태</option><option value="succeeded">완료</option><option value="pending">대기</option><option value="running">생성 중</option><option value="failed">실패 / 대체 안내</option></select></label>
+          <div id="session-list" class="session-list"></div>
+          <div class="list-footer">세션을 선택하면 기록과 코칭을 함께 볼 수 있어요.</div>
+        </section>
+        <div class="detail-column" id="detail" aria-live="polite"></div>
+      </div>
+      <footer class="page-footer"><span>STUDY LOOP <span class="footer-dot">·</span> 임베디드 시스템 2조</span><span>눈 감김 기록만으로 실제 수면이나 집중도를 판단하지 않습니다.</span></footer>
+    </div>
+  </main>
+</body>
+</html>
