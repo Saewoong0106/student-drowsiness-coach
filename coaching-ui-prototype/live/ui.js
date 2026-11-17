@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let user = null, authMode = 'login', studies = [], active = null, selected = null, snapshotAt = 0, stream = null, cameraBusy = false, mutationBusy = false, currentView = 'study';
 let studyFocuses = [];
+let cameraGeneration = 0, studiesRequest = 0;
 const checkedUsernames = { registration: '', profile: '' };
 const normalizedUsername = value => value.trim().toLowerCase();
 const elapsed = ms => {
@@ -12,10 +13,13 @@ const elapsed = ms => {
 const formatDate = time => new Date(time).toLocaleString('ko-KR', {timeZone:'Asia/Seoul',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
 const durationText = ms => `${Math.floor(ms/60000)}분 ${Math.floor(ms/1000)%60}초`;
 async function api(path, data) {
+  const requestUser = user;
   const response = await fetch(path, {method:data === undefined?'GET':'POST', credentials:'same-origin',headers:data===undefined?{}:{'Content-Type':'application/json','X-Study-Request':'1'},...(data===undefined?{}:{body:JSON.stringify(data)})});
-  const result = await response.json();
+  if (response.status === 401 && user === requestUser) clearAccount();
+  let result;
+  try { result = await response.json(); }
+  catch { throw new Error('서버 응답을 읽지 못했습니다. API 서버 연결을 확인해 주세요.'); }
   if (!response.ok) {
-    if (response.status === 401 && user) { stopCamera(); user=null; active=null; showAuth(); }
     throw new Error(result.error || '요청을 처리하지 못했습니다.');
   }
   return result;
@@ -36,6 +40,12 @@ function authTab(mode) {
   $('auth-title').textContent=mode==='register'?'나만의 공부 공간 만들기':'다시 만나 반가워요';
   $('submit-auth').textContent=mode==='register'?'회원가입하고 시작하기':'로그인';
   $('auth-message').textContent='';
+}
+function clearAccount() {
+  stopCamera();studiesRequest++;user=null;studies=[];active=null;selected=null;
+  checkedUsernames.registration='';checkedUsernames.profile='';
+  $('real-list').innerHTML='';$('real-detail').innerHTML='';$('real-overview').innerHTML='';
+  $('history-search').value='';$('password').value='';showAuth();
 }
 function showAuth() {$('app-view').hidden=true;$('onboarding-view').hidden=true;$('auth-view').hidden=false;}
 function showApp() {
@@ -60,7 +70,8 @@ function showOnboarding() {
 }
 async function enterAccount() {
   if(!user.onboarding_complete){showOnboarding();return;}
-  showApp();await loadStudies();setView('study');
+  const account=user;
+  showApp();await loadStudies();if(user===account)setView('study');
 }
 function usernameControls(kind) {
   return kind==='registration'?{input:$('username'),button:$('check-username'),message:$('username-message')}:{input:$('profile-username'),button:$('check-profile-username'),message:$('profile-username-message')};
@@ -91,7 +102,10 @@ function setView(view) {
   if(view==='history'){stopCamera();renderHistory();}
 }
 async function loadStudies() {
+  if(!user)return;
+  const account=user,request=++studiesRequest;
   const result=await api('/api/studies');
+  if(user!==account||request!==studiesRequest)return;
   studies=result.studies;active=studies.find(s=>!s.ended_at)||null;snapshotAt=performance.now();
   if(active)$('study-title').value=active.title;
   if(!selected||!studies.some(s=>s.id===selected))selected=studies[0]?.id||null;
@@ -112,6 +126,7 @@ function tick() {
   $('break-timer').textContent=elapsed((active?.break_ms||0)+(active?.status==='break'?delta:0));
 }
 function stopCamera() {
+  cameraGeneration++;
   window.studyDetection?.stop();
   if(stream){stream.getTracks().forEach(track=>track.stop());stream=null;}
   $('camera').srcObject=null;$('camera').classList.remove('on');
@@ -123,29 +138,32 @@ function stopCamera() {
 async function enableCamera() {
   window.studyDetection?.armSound();
   if(cameraBusy)return;
+  const generation=++cameraGeneration,account=user;
   cameraBusy=true;$('app-message').textContent='';
   $('enable-camera').disabled=true;$('toggle-camera').disabled=true;
   try {
     if(!navigator.mediaDevices?.getUserMedia)throw new Error('카메라는 localhost 또는 HTTPS 주소에서 지원됩니다.');
     const media=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}},audio:false});
     // A permission prompt can resolve after navigating away or logging out.
-    if(!user||currentView!=='study'){media.getTracks().forEach(track=>track.stop());return;}
+    if(generation!==cameraGeneration||user!==account||!user||currentView!=='study'){media.getTracks().forEach(track=>track.stop());return;}
     stream=media;$('camera').srcObject=stream;
     await $('camera').play();
+    if(generation!==cameraGeneration||user!==account||currentView!=='study'||stream!==media){media.getTracks().forEach(track=>track.stop());return;}
     $('camera').classList.add('on');$('camera-placeholder').hidden=true;$('camera-overlay').hidden=false;
     window.studyDetection?.sync(active,true);
     $('camera-badge').textContent='미리보기 연결됨';$('camera-badge').className='badge';
-    $('toggle-camera').textContent='카메라 끄기';$('camera-hint').textContent='얼굴이 화면 안에 오도록 위치를 조절해 주세요. 감지는 아직 미연결입니다.';
-    stream.getVideoTracks()[0].addEventListener('ended',()=>{stopCamera();$('app-message').textContent='카메라 연결이 끊겼습니다. 타이머는 계속 기록 중입니다.';});
+    $('toggle-camera').textContent='카메라 끄기';$('camera-hint').textContent='얼굴이 화면 안에 오도록 위치를 조절해 주세요. 공부 중에는 아래 안내에서 보정·감지 상태를 확인할 수 있어요.';
+    media.getVideoTracks()[0].addEventListener('ended',()=>{if(stream!==media)return;stopCamera();$('app-message').textContent='카메라 연결이 끊겼습니다. 타이머는 계속 기록 중입니다.';});
   }catch(error){
+    if(generation!==cameraGeneration||user!==account)return;
     stopCamera();
     $('app-message').textContent=error.name==='NotAllowedError'?'카메라 권한을 허용해 주세요. 브라우저 주소창의 카메라 권한을 확인할 수 있어요.':error.name==='NotFoundError'?'연결된 카메라를 찾지 못했습니다.':error.name==='NotReadableError'?'다른 앱이 카메라를 사용 중인지 확인해 주세요.':error.message;
   }finally{cameraBusy=false;$('enable-camera').disabled=false;$('toggle-camera').disabled=false;}
 }
 async function mutate(action) {
+  if(mutationBusy)return;
   window.studyDetection?.armSound();
   if(action!=='start')window.studyDetection?.stop(action==='break'?'휴식 중 · 감지와 경고음이 멈췄어요.':'감지 상태를 전환하고 있어요.');
-  if(mutationBusy)return;
   mutationBusy=true;$('app-message').textContent='';
   for(const id of ['start-study','pause-study','finish-study'])$(id).disabled=true;
   try {
@@ -166,16 +184,16 @@ function renderHistory() {
   $('real-overview').innerHTML=[['전체 공부 시간',durationText(total),demoCount?`가상 ${demoCount}개 포함`:'종료된 내 세션 합계'],['종료한 세션',`${finished.length}개`,'진행 중인 세션 제외'],['전체 휴식 시간',durationText(rest),'종료된 내 세션 합계'],['코칭 상태',demoCount?'가상 시연':'연결 예정','실제 모델 미실행']].map(([name,value,note])=>`<article class="stat"><div class="stat-top">${name}</div><div class="stat-value real-value">${value}</div><div class="stat-note">${note}</div></article>`).join('');
   const query=$('history-search').value.trim().toLocaleLowerCase();
   const filtered=studies.filter(s=>s.title.toLocaleLowerCase().includes(query));
-  $('real-list').innerHTML=filtered.length?filtered.map(s=>`<button class="session-item ${selected===s.id?'active':''}" data-study="${s.id}" aria-pressed="${selected===s.id}"><span class="item-title">${escapeHtml(s.title)}<span class="badge ${s.ended_at?'':'pending'}">${s.demo?'가상 기록':s.ended_at?'저장 완료':s.status==='break'?'휴식 중':'공부 중'}</span></span><div class="item-date">${formatDate(s.started_at)} (한국시간)</div><div class="item-meta"><span>공부 ${durationText(s.study_ms)}</span></div></button>`).join(''):`<div class="empty-search">${studies.length?'검색 결과가 없어요.':'아직 공부 기록이 없어요.<br>첫 공부를 시작해 보세요.'}</div>`;
+  $('real-list').innerHTML=filtered.length?filtered.map(s=>`<button class="session-item ${selected===s.id?'active':''}" data-study="${escapeHtml(s.id)}" aria-pressed="${selected===s.id}"><span class="item-title">${escapeHtml(s.title)}<span class="badge ${s.ended_at?'':'pending'}">${s.demo?'가상 기록':s.ended_at?'저장 완료':s.status==='break'?'휴식 중':'공부 중'}</span></span><div class="item-date">${formatDate(s.started_at)} (한국시간)</div><div class="item-meta"><span>공부 ${durationText(s.study_ms)}</span></div></button>`).join(''):`<div class="empty-search">${studies.length?'검색 결과가 없어요.':'아직 공부 기록이 없어요.<br>첫 공부를 시작해 보세요.'}</div>`;
   const row=studies.find(s=>s.id===selected);
   if(row?.demo){$('real-detail').innerHTML=renderDemoReport(row);return;}
   if(!row){$('real-detail').innerHTML='<section class="panel empty-record"><h2>기록이 쌓이면 변화가 보여요</h2><p>공부 기록하기에서 세션을 시작하고 종료해 보세요.</p><button class="primary" id="first-study">첫 공부 시작하기</button></section>';return;}
-  $('real-detail').innerHTML=`<section class="panel"><div class="detail-header"><div><div class="overline">SESSION REPORT / ${row.id}</div><h2 class="detail-title">${escapeHtml(row.title)}</h2><div class="detail-meta">${formatDate(row.started_at)}${row.ended_at?' – '+formatDate(row.ended_at):' · 진행 중'} (한국시간)</div></div><span class="badge ${row.ended_at?'':'pending'}">${row.ended_at?'저장 완료':'진행 중'}</span></div><div class="metrics"><div class="metric"><div class="metric-label">공부 시간</div><div class="metric-value real-value">${elapsed(row.study_ms)}</div></div><div class="metric"><div class="metric-label">휴식 시간</div><div class="metric-value real-value">${elapsed(row.break_ms)}</div></div><div class="metric"><div class="metric-label">눈 감김 의심</div><div class="metric-value">—</div><div class="metric-sub">감지 모듈 미연결</div></div><div class="metric"><div class="metric-label">고개 숙임</div><div class="metric-value">—</div><div class="metric-sub">감지 모듈 미연결</div></div></div><div class="real-session-meta">영상은 저장하지 않으며, 이 화면에는 내 계정의 기록만 표시됩니다.${row.ended_at?'':' 진행 중인 시간은 새로고침 시 갱신됩니다.'}</div></section><section class="panel coaching-panel"><div class="coaching-heading"><div class="coaching-title"><span class="sparkle">✧</span><h2>나의 학습 코칭</h2></div><span class="badge pending">연결 예정</span></div><div class="unconnected"><h3>실제 기록과 코칭을 연결할 공간이에요</h3><p>현재는 공부·휴식 시간만 저장합니다. 졸음 감지와 AI 코칭 모듈을 연결하면 같은 세션 ID에 결과를 표시할 수 있어요. 감지하지 않은 횟수를 0회로 표시하거나 가상 코칭을 실제 결과처럼 보여 주지 않습니다.</p><div class="privacy-label">다음 공부를 위한 루틴 예시: 25분 공부 + 5분 휴식<br>이 안내는 AI가 생성한 코칭이 아닙니다.</div></div></section><section class="panel unconnected"><h3>이벤트 기록</h3><p>눈 감김·고개 숙임·미측정 이벤트는 감지 모듈 연결 후 표시됩니다. 현재 카메라 미리보기로 관측 가능 시간을 계산하지 않습니다.</p></section>`;
+  $('real-detail').innerHTML=`<section class="panel"><div class="detail-header"><div><div class="overline">SESSION REPORT / ${escapeHtml(row.id)}</div><h2 class="detail-title">${escapeHtml(row.title)}</h2><div class="detail-meta">${formatDate(row.started_at)}${row.ended_at?' – '+formatDate(row.ended_at):' · 진행 중'} (한국시간)</div></div><span class="badge ${row.ended_at?'':'pending'}">${row.ended_at?'저장 완료':'진행 중'}</span></div><div class="metrics"><div class="metric"><div class="metric-label">공부 시간</div><div class="metric-value real-value">${elapsed(row.study_ms)}</div></div><div class="metric"><div class="metric-label">휴식 시간</div><div class="metric-value real-value">${elapsed(row.break_ms)}</div></div><div class="metric"><div class="metric-label">눈 감김 의심</div><div class="metric-value">—</div><div class="metric-sub">감지 모듈 미연결</div></div><div class="metric"><div class="metric-label">고개 숙임</div><div class="metric-value">—</div><div class="metric-sub">감지 모듈 미연결</div></div></div><div class="real-session-meta">영상은 저장하지 않으며, 이 화면에는 내 계정의 기록만 표시됩니다.${row.ended_at?'':' 진행 중인 시간은 새로고침 시 갱신됩니다.'}</div></section><section class="panel coaching-panel"><div class="coaching-heading"><div class="coaching-title"><span class="sparkle">✧</span><h2>나의 학습 코칭</h2></div><span class="badge pending">연결 예정</span></div><div class="unconnected"><h3>실제 기록과 코칭을 연결할 공간이에요</h3><p>현재는 공부·휴식 시간만 저장합니다. 졸음 감지와 AI 코칭 모듈을 연결하면 같은 세션 ID에 결과를 표시할 수 있어요. 감지하지 않은 횟수를 0회로 표시하거나 가상 코칭을 실제 결과처럼 보여 주지 않습니다.</p><div class="privacy-label">다음 공부를 위한 루틴 예시: 25분 공부 + 5분 휴식<br>이 안내는 AI가 생성한 코칭이 아닙니다.</div></div></section><section class="panel unconnected"><h3>이벤트 기록</h3><p>눈 감김·고개 숙임·미측정 이벤트는 감지 모듈 연결 후 표시됩니다. 현재 카메라 미리보기로 관측 가능 시간을 계산하지 않습니다.</p></section>`;
   if(row.detection_events&&window.studyDetection)$('real-detail').innerHTML=window.studyDetection.renderRecord(row);
 }
 async function logout() {
   if(active){$('app-message').textContent='진행 중인 공부를 먼저 종료하고 저장해 주세요.';setView('study');return;}
-  try{await api('/api/logout',{});stopCamera();user=null;studies=[];active=null;showAuth();$('password').value='';}catch(error){$('app-message').textContent=error.message;}
+  try{await api('/api/logout',{});clearAccount();}catch(error){$('app-message').textContent=error.message;}
 }
 $('login-tab').addEventListener('click',()=>authTab('login'));
 $('register-tab').addEventListener('click',()=>authTab('register'));
@@ -200,7 +218,7 @@ $('onboarding-form').addEventListener('submit',async e=>{
   finally{$('save-profile').disabled=false;}
 });
 $('onboarding-logout').addEventListener('click',async()=>{
-  try{await api('/api/logout',{});stopCamera();user=null;active=null;studies=[];showAuth();}catch(error){$('onboarding-message').textContent=error.message;}
+  try{await api('/api/logout',{});clearAccount();}catch(error){$('onboarding-message').textContent=error.message;}
 });
 for(const id of ['study-nav','mobile-study'])$(id).addEventListener('click',()=>setView('study'));
 for(const id of ['history-nav','mobile-history'])$(id).addEventListener('click',async()=>{setView('history');try{await loadStudies();}catch(error){$('app-message').textContent=error.message;}});

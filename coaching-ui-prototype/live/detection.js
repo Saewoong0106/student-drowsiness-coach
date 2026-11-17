@@ -3,7 +3,12 @@
 // are sent to the loopback Node/Python service; no image upload or persistence.
 window.studyDetection=(()=>{
   let worker=null,sessionId=null,epoch=0,timer=null,audio=null,muted=false,enabled=false;
-  let loading=false,lastAlarm=0;
+  let lastAlarm=-Infinity;
+  const sounds=new Set();
+  function silence(){
+    for(const {osc,gain} of sounds){try{osc.stop();}catch{}osc.disconnect();gain.disconnect();}
+    sounds.clear();
+  }
   const get=id=>document.getElementById(id);
   const show=(message,warning=false)=>{
     const node=get('detection-message');if(!node)return;
@@ -13,7 +18,7 @@ window.studyDetection=(()=>{
     try{
       audio ||= new (window.AudioContext||window.webkitAudioContext)();
       if(audio.state==='suspended')await audio.resume();
-      get('sound-status').textContent=audio.state==='running'?'경고음 켜짐':'소리 허용 버튼을 눌러 주세요';
+      get('sound-status').textContent=muted?'경고음 꺼짐':audio.state==='running'?'경고음 켜짐':'소리 허용 버튼을 눌러 주세요';
     }catch{get('sound-status').textContent='경고음 미지원 · 화면 경고를 확인해 주세요';}
   }
   function beep(test=false){
@@ -22,6 +27,8 @@ window.studyDetection=(()=>{
     lastAlarm=performance.now();
     for(let i=0;i<2;i++){
       const at=audio.currentTime+i*.23,osc=audio.createOscillator(),gain=audio.createGain();
+      const sound={osc,gain};sounds.add(sound);
+      osc.onended=()=>{sounds.delete(sound);osc.disconnect();gain.disconnect();};
       osc.type='sine';osc.frequency.value=880;
       gain.gain.setValueAtTime(0,at);gain.gain.linearRampToValueAtTime(.12,at+.015);gain.gain.linearRampToValueAtTime(0,at+.16);
       osc.connect(gain);gain.connect(audio.destination);osc.start(at);osc.stop(at+.18);
@@ -32,8 +39,8 @@ window.studyDetection=(()=>{
     const result=await response.json();if(!response.ok)throw Error(result.error||'감지 연결 오류');return result;
   }
   function stop(message='감지 대기 · 카메라를 켜고 공부를 시작해 주세요.'){
-    enabled=false;epoch++;clearTimeout(timer);worker?.terminate();worker=null;loading=false;
-    sessionId=null;show(message);
+    enabled=false;epoch++;clearTimeout(timer);worker?.terminate();worker=null;silence();
+    sessionId=null;get('detection-counts').textContent='눈 감김 의심 — · 고개 숙임 —';show(message);
   }
   async function frame(generation){
     if(generation!==epoch||!enabled||!worker)return;
@@ -63,13 +70,13 @@ window.studyDetection=(()=>{
     if(!shouldRun){if(enabled||worker)stop(study?.status==='break'?'휴식 중 · 감지와 경고음이 멈췄어요.':undefined);return;}
     if(enabled&&sessionId===study.id)return;
     stop();enabled=true;sessionId=study.id;const generation=epoch;
-    show('얼굴 측정 모델을 준비하고 있어요.');loading=true;
+    show('얼굴 측정 모델을 준비하고 있어요.');
     worker=new Worker('/face-worker.js',{type:'module'});
     worker.onerror=()=>{if(generation===epoch)stop('감지 연결 오류 · 서버 실행과 로컬 MediaPipe 파일을 확인해 주세요.');};
     worker.onmessage=async({data})=>{
       if(generation!==epoch)return;
       if(data.type==='error'){stop(data.message);return;}
-      if(data.type==='ready'){loading=false;frame(generation);return;}
+      if(data.type==='ready'){frame(generation);return;}
       if(data.type==='measurement'){
         try{
           const result=await post(`/api/studies/${sessionId}/detection`,data);
@@ -82,7 +89,7 @@ window.studyDetection=(()=>{
   }
   function bind(){
     get('test-sound')?.addEventListener('click',async()=>{muted=false;await armSound();beep(true);get('mute-sound').textContent='소리 끄기';});
-    get('mute-sound')?.addEventListener('click',()=>{muted=!muted;get('mute-sound').textContent=muted?'소리 켜기':'소리 끄기';get('sound-status').textContent=muted?'경고음 꺼짐':'경고음 켜짐';if(!muted)armSound();});
+    get('mute-sound')?.addEventListener('click',()=>{muted=!muted;if(muted)silence();get('mute-sound').textContent=muted?'소리 켜기':'소리 끄기';get('sound-status').textContent=muted?'경고음 꺼짐':'경고음 켜짐';if(!muted)armSound();});
     get('recalibrate')?.addEventListener('click',async()=>{
       if(!sessionId)return;
       const id=sessionId;stop('보정을 다시 준비하고 있어요.');
@@ -97,7 +104,7 @@ window.studyDetection=(()=>{
     const clock=ms=>{const seconds=Math.floor(ms/1000);return [Math.floor(seconds/3600),Math.floor(seconds/60)%60,seconds%60].map(n=>String(n).padStart(2,'0')).join(':');};
     const events=row.detection_events;
     const eye=events.filter(e=>e.type==='eye_closure_suspected').length,head=events.filter(e=>e.type==='head_down').length;
-    return `<section class="panel"><div class="detail-header"><div><div class="overline">SESSION REPORT / ${esc(row.id)}</div><h2 class="detail-title">${esc(row.title)}</h2><div class="detail-meta">${new Date(row.started_at).toLocaleString('ko-KR')} · ${row.ended_at?'종료된 기록':'진행 중'}</div></div><span class="badge">감지 기록 연결됨</span></div><div class="metrics"><div class="metric"><div class="metric-label">공부 시간</div><div class="metric-value real-value">${clock(row.study_ms)}</div></div><div class="metric"><div class="metric-label">휴식 시간</div><div class="metric-value real-value">${clock(row.break_ms)}</div></div><div class="metric orange"><div class="metric-label">눈 감김 의심</div><div class="metric-value">${eye}<small>회</small></div></div><div class="metric"><div class="metric-label">고개 숙임</div><div class="metric-value">${head}<small>회</small></div></div></div><div class="observation">관측 가능한 구간에서 확정한 이벤트입니다. 얼굴 가림을 완벽하게 구분하지 못할 수 있으며, 카메라를 끈 구간을 정상으로 간주하지 않습니다.</div></section><section class="panel"><div class="panel-heading"><h2>감지 이벤트 기록</h2><span class="tiny-label">${events.length}건</span></div><div class="records-body"><table><thead><tr><th scope="col">시작 후</th><th scope="col">이벤트</th><th scope="col">확정 시점</th><th scope="col">지속</th></tr></thead><tbody>${events.map(e=>`<tr><td>${clock(e.condition_started_s*1000)}</td><td>${e.type==='head_down'?'고개 숙임 · 자세 주의':'눈 감김 의심'}</td><td>${clock(e.confirmed_s*1000)}</td><td>${e.ended_s===null?'종료 확인 안 됨':Math.max(0,e.ended_s-e.condition_started_s).toFixed(1)+'초'}</td></tr>`).join('')||'<tr><td colspan="4">확정된 이벤트가 없습니다. 보정·미측정 상태와 구분해 해석해 주세요.</td></tr>'}</tbody></table><p class="record-note">공부 시작 후 경과 시간 기준입니다. 관측 가능 시간·미측정 비율은 아직 집계하지 않습니다.</p></div></section><section class="panel unconnected"><h3>학습 코칭 · 연결 예정</h3><p>눈 감김과 고개 숙임은 따로 기록합니다. AI 코칭 모델은 아직 연결되지 않았습니다.</p></section>`;
+    return `<section class="panel"><div class="detail-header"><div><div class="overline">SESSION REPORT / ${esc(row.id)}</div><h2 class="detail-title">${esc(row.title)}</h2><div class="detail-meta">${new Date(row.started_at).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})} · ${row.ended_at?'종료된 기록':'진행 중'}</div></div><span class="badge">감지 기록 연결됨</span></div><div class="metrics"><div class="metric"><div class="metric-label">공부 시간</div><div class="metric-value real-value">${clock(row.study_ms)}</div></div><div class="metric"><div class="metric-label">휴식 시간</div><div class="metric-value real-value">${clock(row.break_ms)}</div></div><div class="metric orange"><div class="metric-label">눈 감김 의심</div><div class="metric-value">${eye}<small>회</small></div></div><div class="metric"><div class="metric-label">고개 숙임</div><div class="metric-value">${head}<small>회</small></div></div></div><div class="observation">관측 가능한 구간에서 확정한 이벤트입니다. 얼굴 가림을 완벽하게 구분하지 못할 수 있으며, 카메라를 끈 구간을 정상으로 간주하지 않습니다.</div></section><section class="panel"><div class="panel-heading"><h2>감지 이벤트 기록</h2><span class="tiny-label">${events.length}건</span></div><div class="records-body"><table><thead><tr><th scope="col">시작 후</th><th scope="col">이벤트</th><th scope="col">확정 시점</th><th scope="col">지속</th></tr></thead><tbody>${events.map(e=>`<tr><td>${clock(e.condition_started_s*1000)}</td><td>${e.type==='head_down'?'고개 숙임 · 자세 주의':'눈 감김 의심'}</td><td>${clock(e.confirmed_s*1000)}</td><td>${e.ended_s===null?'종료 확인 안 됨':Math.max(0,e.ended_s-e.condition_started_s).toFixed(1)+'초'}</td></tr>`).join('')||'<tr><td colspan="4">확정된 이벤트가 없습니다. 보정·미측정 상태와 구분해 해석해 주세요.</td></tr>'}</tbody></table><p class="record-note">공부 시작 후 경과 시간 기준입니다. 관측 가능 시간·미측정 비율은 아직 집계하지 않습니다.</p></div></section><section class="panel unconnected"><h3>학습 코칭 · 연결 예정</h3><p>눈 감김과 고개 숙임은 따로 기록합니다. AI 코칭 모델은 아직 연결되지 않았습니다.</p></section>`;
   }
   return {sync,stop,armSound,renderRecord};
 })();
