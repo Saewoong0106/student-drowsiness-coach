@@ -101,6 +101,14 @@ $env:PYTHONUTF8 = "1"
 
 내보내기 결과는 세션 요약 JSON과 이벤트 CSV입니다. 공부 시간은 보정·휴식을 제외한 경과 시간이며, 얼굴을 관측하지 못한 시간을 함께 표시합니다. 자세한 사용법은 [공부 세션 안내](docs/study-session.md)를 참고하세요.
 
+### 기록·코칭 결과 화면
+
+기존 Python 기록을 창에서 확인하려면 `python records_app.py`를 실행합니다.
+Windows 가상환경에서는 `.\.venv\Scripts\python.exe records_app.py` 또는 `start_records.bat`,
+Mac에서는 `.venv/bin/python records_app.py`를 사용합니다.
+세션 검색·상세 조회·코칭 생성/저장·JSON/CSV 내보내기를 제공하며, 로그인이나 별도 웹 서버는 필요하지 않습니다.
+기본 코칭은 규칙 기반 안내입니다. 모델 실행 조건, 파일 구조와 검증 범위는 [기록 화면 안내](docs/records-ui.md)를 참고하세요.
+
 ## 구현 방향
 
 영상 측정, 시간에 따른 상태 판정, 기록, 한국어 코칭을 분리해 개발합니다. MediaPipe는 얼굴 특징점을 찾고, Python은 눈 열림·고개 각도와 지속시간을 계산합니다. LLM에는 영상 대신 종료된 세션의 요약 통계와 세션 ID를 전달합니다.
