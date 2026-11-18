@@ -13,10 +13,12 @@ from .coaching import (
     classify_scenario,
     coerce_summary,
     format_seconds_ko,
+    generate_diverse_coaching_text,
     generate_rule_coaching_text,
     validate_coaching_text,
 )
 from .contracts import SCHEMA_VERSION, SessionSummary
+from .storage import SessionStore
 
 IGNORE_INDEX = -100
 SYNTHETIC_SOURCES = ("synthetic_seed", "synthetic_auto", "rule_bootstrap")
@@ -305,8 +307,21 @@ def split_coaching_records(
 def _scenario_template_summary(scenario: str, group_idx: int, variant_idx: int) -> SessionSummary:
     """Create a deterministic SessionSummary for a given (scenario, group_idx, variant_idx)."""
     session_id = f"seed-{scenario}-g{group_idx:02d}-v{variant_idx:02d}"
-    goals = ("자료구조 복습", "운영체제 정리", "임베디드 실습 예습", "알고리즘 문제 풀이")
-    goal = goals[(group_idx + variant_idx) % len(goals)]
+    goals = (
+        "자료구조 복습",
+        "운영체제 정리",
+        "임베디드 실습 예습",
+        "알고리즘 문제 풀이",
+        "컴퓨터구조 파이프라인 정리",
+        "네트워크 프로토콜 복습",
+        "데이터베이스 SQL 실습",
+        "디지털논리회로 설계",
+        "신호및시스템 예제 풀이",
+        "소프트웨어공학 설계서 작성",
+        "인공지능 논문 읽기",
+        "선형대수학 문제 풀이",
+    )
+    goal = goals[(group_idx * 3 + variant_idx) % len(goals)]
     offset_s = variant_idx * 60
 
     if scenario == "normal":
@@ -488,8 +503,9 @@ def build_seed_coaching_records(
     *,
     groups_per_scenario: int = 3,
     variants_per_group: int = 2,
+    diverse_templates: bool = True,
 ) -> list[CoachingRecord]:
-    """Generate small synthetic seed records for pipeline testing (marked source='synthetic_seed', reviewed=False)."""
+    """Generate synthetic seed records across all 8 scenarios (marked source='synthetic_seed', reviewed=False)."""
     if groups_per_scenario < 1 or variants_per_group < 1:
         raise ValueError("groups_per_scenario and variants_per_group must be >= 1")
 
@@ -499,7 +515,11 @@ def build_seed_coaching_records(
             group_id = f"grp-{scenario}-{group_idx:02d}"
             for variant_idx in range(1, variants_per_group + 1):
                 summary = _scenario_template_summary(scenario, group_idx, variant_idx)
-                target = generate_rule_coaching_text(summary)
+                if diverse_templates:
+                    style_idx = (group_idx - 1) * variants_per_group + (variant_idx - 1)
+                    target = generate_diverse_coaching_text(summary, variant_index=style_idx)
+                else:
+                    target = generate_rule_coaching_text(summary)
                 rec = CoachingRecord(
                     id=f"{scenario}-g{group_idx:02d}-v{variant_idx:02d}",
                     scenario=scenario,
@@ -511,6 +531,254 @@ def build_seed_coaching_records(
                 )
                 records.append(rec)
     return records
+
+
+def _normalize_raw_session_dict(raw: dict) -> SessionSummary:
+    """Normalize a raw session snapshot dict from SQLite or exported JSON into a valid SessionSummary."""
+    payload = dict(raw.get("summary", raw))
+    study_s = max(0.0, float(payload.get("study_seconds", 0.0)))
+    obs_s = max(0.0, min(study_s, float(payload.get("observable_seconds", 0.0))))
+    unobs_s = max(0.0, float(payload.get("unobservable_seconds", max(0.0, study_s - obs_s))))
+    if obs_s + unobs_s > study_s:
+        unobs_s = max(0.0, study_s - obs_s)
+    eye_cnt = max(0, int(payload.get("eye_closure_count", 0)))
+    eye_sec = max(0.0, min(obs_s, float(payload.get("eye_closure_seconds", 0.0))))
+    if eye_cnt == 0:
+        eye_sec = 0.0
+    elif eye_sec <= 0.0 and obs_s > 0.0:
+        eye_sec = min(obs_s, float(eye_cnt * 2.0))
+    elif eye_sec <= 0.0:
+        eye_cnt = 0
+
+    raw_windows = payload.get("windows") or []
+    normalized_windows = []
+    if raw_windows:
+        for w in raw_windows:
+            w_start = max(0.0, float(w.get("start_s", 0.0)))
+            w_end = max(w_start, float(w.get("end_s", study_s)))
+            w_obs = max(0.0, min(w_end - w_start, float(w.get("observable_seconds", obs_s))))
+            normalized_windows.append(
+                {
+                    "start_s": w_start,
+                    "end_s": w_end,
+                    "observable_seconds": w_obs,
+                    "eye_closure_count": max(0, int(w.get("eye_closure_count", eye_cnt))),
+                }
+            )
+    elif study_s > 0:
+        normalized_windows.append(
+            {
+                "start_s": 0.0,
+                "end_s": study_s,
+                "observable_seconds": obs_s,
+                "eye_closure_count": eye_cnt,
+            }
+        )
+
+    return SessionSummary(
+        session_id=str(payload["session_id"]),
+        goal=str(payload.get("goal") or "일반 학습"),
+        study_seconds=study_s,
+        break_seconds=max(0.0, float(payload.get("break_seconds", 0.0))),
+        observable_seconds=obs_s,
+        unobservable_seconds=unobs_s,
+        eye_closure_count=eye_cnt,
+        eye_closure_seconds=eye_sec,
+        head_down_count=max(0, int(payload.get("head_down_count", 0))),
+        windows=normalized_windows,
+        schema_version=str(payload.get("schema_version") or SCHEMA_VERSION),
+    )
+
+
+def records_from_summaries(
+    summaries: Iterable[SessionSummary | dict],
+    *,
+    source: str = "measured_session",
+    reviewed: bool = False,
+    variants_per_session: int = 1,
+    id_prefix: str = "measured",
+) -> list[CoachingRecord]:
+    """Convert real measured SessionSummary items into CoachingRecord items with diverse coaching phrasing."""
+    if variants_per_session < 1:
+        raise ValueError("variants_per_session must be >= 1")
+
+    records: list[CoachingRecord] = []
+    for s_idx, item in enumerate(summaries, start=1):
+        base_summary = item if isinstance(item, SessionSummary) else _normalize_raw_session_dict(item)
+        scenario = classify_scenario(base_summary)
+        short_sid = base_summary.session_id.split("-")[0][:8]
+        group_id = f"grp-{id_prefix}-{short_sid}"
+        for v_idx in range(1, variants_per_session + 1):
+            style_idx = (s_idx - 1) * variants_per_session + (v_idx - 1)
+            target = generate_diverse_coaching_text(base_summary, variant_index=style_idx)
+            rec_id = (
+                f"{id_prefix}-{short_sid}"
+                if variants_per_session == 1
+                else f"{id_prefix}-{short_sid}-v{v_idx:02d}"
+            )
+            records.append(
+                CoachingRecord(
+                    id=rec_id,
+                    scenario=scenario,
+                    group_id=group_id,
+                    source=source,
+                    reviewed=reviewed,
+                    input=base_summary.to_dict(),
+                    target=target,
+                )
+            )
+    return records
+
+
+def extract_coaching_records_from_db(
+    db_path: str | Path,
+    *,
+    limit: int = 500,
+    source: str = "measured_session",
+    reviewed: bool = False,
+    variants_per_session: int = 1,
+) -> list[CoachingRecord]:
+    """Extract CoachingRecord items from a local SQLite SessionStore database."""
+    path = Path(db_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Database file not found: {path}")
+    store = SessionStore(path)
+    try:
+        raw_sessions = store.list_sessions(limit=limit)
+    finally:
+        store.close()
+    return records_from_summaries(
+        raw_sessions,
+        source=source,
+        reviewed=reviewed,
+        variants_per_session=variants_per_session,
+        id_prefix="db",
+    )
+
+
+def extract_coaching_records_from_json(
+    json_path_or_dir: str | Path,
+    *,
+    source: str = "measured_json",
+    reviewed: bool = False,
+    variants_per_session: int = 1,
+) -> list[CoachingRecord]:
+    """Extract CoachingRecord items from an exported session JSON file or directory of JSON files."""
+    target_path = Path(json_path_or_dir)
+    if not target_path.exists():
+        raise FileNotFoundError(f"JSON path not found: {target_path}")
+
+    json_files = [target_path] if target_path.is_file() else sorted(target_path.glob("*.json"))
+    raw_items: list[dict] = []
+    for jf in json_files:
+        if jf.name in ("split_manifest.json", "blind_evaluation_sheet.json", "blind_answer_key.json", "evaluation_report.json", "training_metadata.json"):
+            continue
+        payload = json.loads(jf.read_text(encoding="utf-8"))
+        if isinstance(payload, list):
+            for entry in payload:
+                if isinstance(entry, dict) and ("session_id" in entry or "summary" in entry):
+                    raw_items.append(entry)
+        elif isinstance(payload, dict) and ("session_id" in payload or "summary" in payload):
+            raw_items.append(payload)
+
+    return records_from_summaries(
+        raw_items,
+        source=source,
+        reviewed=reviewed,
+        variants_per_session=variants_per_session,
+        id_prefix="json",
+    )
+
+
+def mark_records_reviewed(
+    records: Iterable[CoachingRecord | dict],
+    *,
+    reviewer: str = "human_reviewed",
+) -> list[CoachingRecord]:
+    """Promote coaching records to reviewed=True with a non-synthetic reviewer source."""
+    clean_reviewer = reviewer.strip() or "human_reviewed"
+    if clean_reviewer in SYNTHETIC_SOURCES or clean_reviewer.startswith("synthetic"):
+        clean_reviewer = "human_reviewed"
+    source_tag = clean_reviewer if clean_reviewer in REVIEWED_SOURCES else f"human_reviewed:{clean_reviewer}"
+
+    updated: list[CoachingRecord] = []
+    for item in records:
+        rec = item if isinstance(item, CoachingRecord) else CoachingRecord.from_dict(item)
+        updated.append(
+            CoachingRecord(
+                id=rec.id,
+                scenario=rec.scenario,
+                group_id=rec.group_id,
+                source=source_tag,
+                reviewed=True,
+                input=rec.input,
+                target=rec.target,
+            )
+        )
+    return updated
+
+
+def export_review_batches(
+    records: Iterable[CoachingRecord | dict],
+    output_dir: str | Path,
+    *,
+    assignees: tuple[str, ...] = ("Saewoong0106", "nisuhyo", "suyeongim320"),
+) -> dict:
+    """Partition coaching records by group_id across team reviewers and write JSONL + Markdown sheets."""
+    if not assignees:
+        raise ValueError("assignees must not be empty")
+    typed_records = [
+        item if isinstance(item, CoachingRecord) else CoachingRecord.from_dict(item)
+        for item in records
+    ]
+    groups: dict[str, list[CoachingRecord]] = defaultdict(list)
+    for rec in typed_records:
+        groups[rec.group_id].append(rec)
+
+    sorted_gids = sorted(groups.keys())
+    batches: dict[str, list[CoachingRecord]] = {a: [] for a in assignees}
+    for idx, gid in enumerate(sorted_gids):
+        owner = assignees[idx % len(assignees)]
+        batches[owner].extend(groups[gid])
+
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    summary_info = {"total_records": len(typed_records), "assignees": {}}
+
+    for owner, items in batches.items():
+        jsonl_file = out_path / f"review_{owner}.jsonl"
+        md_file = out_path / f"review_{owner}.md"
+        save_coaching_jsonl(items, jsonl_file)
+
+        md_lines = [
+            f"# 코칭 데이터 검수 시트 — 담당: `{owner}` ({len(items)}건)",
+            "",
+            "- 각 문장이 세션 통계(공부/휴식/관측 시간, 눈 감김 의심 횟수, 고개 숙임 횟수)와 일치하는지 확인하세요.",
+            "- 어색한 표현이 있다면 JSONL 파일의 `target` 문장을 수정한 뒤 아래 명령으로 검수 완료 처리합니다:",
+            f"  ```sh\n  .venv/bin/python scripts/coaching_dataset.py --mark-reviewed {jsonl_file} --reviewer {owner} --output {out_path / f'reviewed_{owner}.jsonl'}\n  ```",
+            "",
+            "| # | ID | 시나리오 | 목표 | 공부/휴식/관측 | 눈감김/고개숙임 | 코칭 문장 (`target`) |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for idx, rec in enumerate(items, start=1):
+            s = rec.summary()
+            stats_col = f"공부 {format_seconds_ko(s.study_seconds)} / 휴식 {format_seconds_ko(s.break_seconds)} / 관측 {format_seconds_ko(s.observable_seconds)}"
+            event_col = f"눈 {s.eye_closure_count}회({int(round(s.eye_closure_seconds))}초) / 고개 {s.head_down_count}회"
+            md_lines.append(
+                f"| {idx} | `{rec.id}` | `{rec.scenario}` | {s.goal} | {stats_col} | {event_col} | {rec.target} |"
+            )
+        md_file.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+
+        summary_info["assignees"][owner] = {
+            "record_count": len(items),
+            "group_count": len({r.group_id for r in items}),
+            "jsonl_path": str(jsonl_file),
+            "markdown_path": str(md_file),
+        }
+
+    manifest_file = out_path / "review_batches_manifest.json"
+    manifest_file.write_text(json.dumps(summary_info, ensure_ascii=False, indent=2), encoding="utf-8")
+    return summary_info
 
 
 def encode_causal_lm_sample(

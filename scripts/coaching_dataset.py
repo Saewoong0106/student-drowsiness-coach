@@ -11,7 +11,11 @@ if str(ROOT) not in sys.path:
 
 from study_coach.coaching_data import (
     build_seed_coaching_records,
+    export_review_batches,
+    extract_coaching_records_from_db,
+    extract_coaching_records_from_json,
     load_coaching_jsonl,
+    mark_records_reviewed,
     save_coaching_jsonl,
     split_coaching_records,
     validate_coaching_dataset,
@@ -21,15 +25,51 @@ from study_coach.coaching_data import (
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="코칭 학습 데이터(JSONL) 시드 생성, 무결성 검증, 그룹 단위 분할 도구"
+        description="코칭 학습 데이터(JSONL) 시드/실측 추출, 무결성 검증, 팀원 검수 배분, 그룹 단위 분할 도구"
     )
     parser.add_argument(
         "--generate-seed",
         type=Path,
-        help="소량 합성 시드 JSONL 파일 생성 경로 (source='synthetic_seed', reviewed=False)",
+        help="코칭 JSONL 파일 생성 경로 (기본 source='synthetic_seed', reviewed=False)",
     )
     parser.add_argument("--groups-per-scenario", type=int, default=3)
     parser.add_argument("--variants-per-group", type=int, default=2)
+    parser.add_argument(
+        "--from-db",
+        type=Path,
+        help="실제 측정된 SQLite 세션 DB(study.sqlite3)에서 코칭 데이터를 추출해 포함할 경로",
+    )
+    parser.add_argument(
+        "--from-json",
+        type=Path,
+        help="session_report.py --export로 내보낸 JSON 파일 또는 폴더에서 코칭 데이터를 추출할 경로",
+    )
+    parser.add_argument(
+        "--variants-per-session",
+        type=int,
+        default=1,
+        help="--from-db / --from-json 추출 시 세션당 생성할 코칭 문장 변형 수 (기본 1)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="--from-db, --from-json, --mark-reviewed 결과를 저장할 JSONL 파일 경로",
+    )
+    parser.add_argument(
+        "--assign-review",
+        type=Path,
+        help="검증/생성된 데이터를 팀원 3명(Saewoong0106, nisuhyo, suyeongim320) 검수 시트로 배분할 폴더 경로",
+    )
+    parser.add_argument(
+        "--mark-reviewed",
+        type=Path,
+        help="사람이 검수를 마친 JSONL 파일을 reviewed=True로 승격할 입력 경로",
+    )
+    parser.add_argument(
+        "--reviewer",
+        default="human_reviewed",
+        help="--mark-reviewed 시 기록할 검수자 ID (예: Saewoong0106)",
+    )
     parser.add_argument("--validate", type=Path, help="검증할 코칭 JSONL 파일 경로")
     parser.add_argument(
         "--require-reviewed",
@@ -51,18 +91,77 @@ def parse_args(argv=None):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    if not (args.generate_seed or args.validate or args.split):
-        print("실행할 작업을 지정하세요 (--generate-seed, --validate, --split 중 하나 이상).", file=sys.stderr)
+    has_action = any(
+        (
+            args.generate_seed,
+            args.from_db,
+            args.from_json,
+            args.mark_reviewed,
+            args.assign_review,
+            args.validate,
+            args.split,
+        )
+    )
+    if not has_action:
+        print(
+            "실행할 작업을 지정하세요 (--generate-seed, --from-db, --from-json, --mark-reviewed, --assign-review, --validate, --split).",
+            file=sys.stderr,
+        )
         return 2
 
     try:
+        generated_records = []
+        if args.from_db:
+            db_records = extract_coaching_records_from_db(
+                args.from_db,
+                variants_per_session=args.variants_per_session,
+            )
+            generated_records.extend(db_records)
+            print(f"DB 세션 추출 완료: {args.from_db} ({len(db_records)}건)")
+
+        if args.from_json:
+            json_records = extract_coaching_records_from_json(
+                args.from_json,
+                variants_per_session=args.variants_per_session,
+            )
+            generated_records.extend(json_records)
+            print(f"JSON 세션 추출 완료: {args.from_json} ({len(json_records)}건)")
+
         if args.generate_seed:
-            records = build_seed_coaching_records(
+            seed_records = build_seed_coaching_records(
                 groups_per_scenario=args.groups_per_scenario,
                 variants_per_group=args.variants_per_group,
+                diverse_templates=True,
             )
-            out_path = save_coaching_jsonl(records, args.generate_seed)
-            print(f"시드 데이터 생성 완료: {out_path} ({len(records)}건, synthetic_seed / reviewed=False)")
+            combined = generated_records + seed_records
+            out_path = save_coaching_jsonl(combined, args.generate_seed)
+            print(
+                f"코칭 데이터 생성 완료: {out_path} (총 {len(combined)}건 = 실측 추출 {len(generated_records)}건 + 시나리오 생성 {len(seed_records)}건)"
+            )
+            generated_records = combined
+        elif generated_records and args.output:
+            out_path = save_coaching_jsonl(generated_records, args.output)
+            print(f"실측 코칭 데이터 저장 완료: {out_path} ({len(generated_records)}건)")
+
+        if args.mark_reviewed:
+            raw_to_mark = load_coaching_jsonl(args.mark_reviewed)
+            marked = mark_records_reviewed(raw_to_mark, reviewer=args.reviewer)
+            target_out = args.output or args.mark_reviewed
+            save_coaching_jsonl(marked, target_out)
+            print(f"검수 완료 처리(reviewed=True, reviewer={args.reviewer}): {target_out} ({len(marked)}건)")
+
+        if args.assign_review:
+            source_file = args.generate_seed or args.output or args.validate or args.split
+            records_for_review = generated_records if generated_records else (
+                load_coaching_jsonl(source_file) if source_file else []
+            )
+            if not records_for_review:
+                print("--assign-review를 실행하려면 입력 데이터(--generate-seed, --validate 등)가 필요합니다.", file=sys.stderr)
+                return 2
+            batch_info = export_review_batches(records_for_review, args.assign_review)
+            print(f"팀원별 검수 시트 배분 완료: {args.assign_review} (총 {batch_info['total_records']}건)")
+            for owner, info in batch_info["assignees"].items():
+                print(f"  - {owner}: {info['record_count']}건 ({info['group_count']}개 그룹) -> {info['markdown_path']}")
 
         if args.validate:
             raw_rows = [

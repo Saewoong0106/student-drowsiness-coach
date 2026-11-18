@@ -23,6 +23,10 @@ from study_coach.coaching_data import (
     build_seed_coaching_records,
     collate_causal_lm_batch,
     encode_causal_lm_sample,
+    export_review_batches,
+    extract_coaching_records_from_db,
+    extract_coaching_records_from_json,
+    mark_records_reviewed,
     split_coaching_records,
     validate_coaching_dataset,
     validate_coaching_record,
@@ -290,6 +294,70 @@ class DatasetAndTrainingPipelineTests(unittest.TestCase):
             self.assertEqual(eval_summary["metrics"]["base"]["fallback_rate"], 1.0)
             blind_sheet = json.loads((eval_dir / "blind_evaluation_sheet.json").read_text(encoding="utf-8"))
             self.assertEqual(len(blind_sheet), eval_summary["total_records"])
+
+    def test_initial_96_diverse_records_db_json_extraction_and_review_batches(self):
+        records_96 = build_seed_coaching_records(
+            groups_per_scenario=4,
+            variants_per_group=3,
+            diverse_templates=True,
+        )
+        self.assertEqual(len(records_96), 96)
+        report = validate_coaching_dataset(records_96, require_reviewed=False)
+        self.assertTrue(report["valid"], report["errors"])
+
+        # Ensure variants within a group have distinct phrasing
+        by_group = {}
+        for rec in records_96:
+            by_group.setdefault(rec.group_id, []).append(rec.target)
+        for gid, targets in by_group.items():
+            self.assertEqual(len(set(targets)), 3, f"Expected 3 distinct phrasings in {gid}")
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            db_path = root / "measured.sqlite3"
+            export_dir = root / "exported"
+            review_dir = root / "reviews"
+
+            session = StudySession(
+                settings=Settings(calibration_seconds=1.0, calibration_samples=3),
+                source="video_sample",
+                goal="공개 영상 추출 테스트",
+            )
+            for idx in range(0, 35):
+                t = round(idx * 0.2, 2)
+                ear = 0.12 if 1.2 <= t <= 3.6 else 0.30
+                session.step(t, ear, 5.0, eye_valid=True, pose_valid=True)
+            session.finish(7.2, reason="video_end")
+
+            store = SessionStore(db_path)
+            try:
+                store.save(session)
+                store.export(session.session_id, export_dir)
+            finally:
+                store.close()
+
+            db_records = extract_coaching_records_from_db(db_path, variants_per_session=2)
+            self.assertEqual(len(db_records), 2)
+            self.assertTrue(validate_coaching_dataset(db_records)["valid"])
+
+            json_records = extract_coaching_records_from_json(export_dir, variants_per_session=2)
+            self.assertEqual(len(json_records), 2)
+            self.assertTrue(validate_coaching_dataset(json_records)["valid"])
+
+            batch_info = export_review_batches(records_96, review_dir)
+            self.assertEqual(batch_info["total_records"], 96)
+            total_assigned = 0
+            for assignee in ("Saewoong0106", "nisuhyo", "suyeongim320"):
+                cnt = batch_info["assignees"][assignee]["record_count"]
+                self.assertIn(cnt, (30, 33))
+                total_assigned += cnt
+                self.assertTrue(Path(batch_info["assignees"][assignee]["markdown_path"]).is_file())
+            self.assertEqual(total_assigned, 96)
+
+            reviewed_96 = mark_records_reviewed(records_96, reviewer="Saewoong0106")
+            strict_report = validate_coaching_dataset(reviewed_96, require_reviewed=True)
+            self.assertTrue(strict_report["valid"], strict_report["errors"])
+            self.assertEqual(strict_report["reviewed_records"], 96)
 
 
 class ContractHandoffAndEnvironmentTests(unittest.TestCase):

@@ -239,6 +239,135 @@ def generate_rule_coaching_text(summary_or_dict: SessionSummary | dict) -> str:
     return f"{fact} {interpretation} {action}"
 
 
+def generate_diverse_coaching_text(summary_or_dict: SessionSummary | dict, variant_index: int = 0) -> str:
+    """Generate diverse 3-part Korean coaching messages across multiple templates while preserving numeric faithfulness."""
+    summary = coerce_summary(summary_or_dict)
+    if variant_index == 0:
+        return generate_rule_coaching_text(summary)
+
+    scenario = classify_scenario(summary)
+    study_ko = format_seconds_ko(summary.study_seconds)
+    break_ko = format_seconds_ko(summary.break_seconds)
+    obs_ko = format_seconds_ko(summary.observable_seconds)
+    unobs_ko = format_seconds_ko(summary.unobservable_seconds)
+    eye_cnt = summary.eye_closure_count
+    eye_sec = int(round(summary.eye_closure_seconds))
+    head_cnt = summary.head_down_count
+    goal_name = summary.goal.strip() if summary.goal and summary.goal.strip() else "일반 학습"
+
+    if summary.observable_seconds <= 0:
+        zero_facts = (
+            f"'{goal_name}' 학습 기록을 보면 공부 {study_ko}(휴식 {break_ko}) 동안 유효 관측 가능 시간이 0초여서 관측 비율은 측정 불가로 집계되었습니다(눈 감김 의심 {eye_cnt}회, 고개 숙임 {head_cnt}회).",
+            f"이번 '{goal_name}' 세션은 전체 공부 시간 {study_ko} 중 미측정 구간이 {unobs_ko}를 차지하여 관측된 시간이 0초(측정 불가)로 남았으며, 눈 감김 의심 {eye_cnt}회와 고개 숙임 {head_cnt}회가 기록되었습니다.",
+            f"'{goal_name}' 진행 시간 {study_ko}(휴식 {break_ko}) 동안 얼굴 특징점 관측이 이루어지지 않아 관측 불가 상태로 분류되었고, 눈 감김 의심은 {eye_cnt}회, 고개 숙임은 {head_cnt}회로 집계되었습니다.",
+        )
+        fact = zero_facts[variant_index % len(zero_facts)]
+    else:
+        obs_ratio_pct = (summary.observable_seconds / summary.study_seconds * 100.0) if summary.study_seconds > 0 else 0.0
+        normal_facts = (
+            f"'{goal_name}' 공부 {study_ko}(휴식 {break_ko}) 중 유효 관측 시간은 {obs_ko}(관측률 {obs_ratio_pct:.0f}%, 미측정 {unobs_ko})였으며, 눈 감김 의심은 {eye_cnt}회(누적 {eye_sec}초), 고개 숙임은 {head_cnt}회 발생했습니다.",
+            f"이번 '{goal_name}' 세션에서는 총 {study_ko} 공부하고 {break_ko} 쉬었으며, 관측 가능 구간 {obs_ko}(미측정 {unobs_ko}) 동안 눈 감김 의심 {eye_cnt}회({eye_sec}초)와 고개 숙임 이벤트 {head_cnt}회가 확인되었습니다.",
+            f"'{goal_name}' 목표 세션 집계 결과, 공부 시간 {study_ko}·휴식 시간 {break_ko} 중 {obs_ko}가 정상 관측(미측정 {unobs_ko})되었고 눈 감김 의심 {eye_cnt}회(총 {eye_sec}초) 및 고개 숙임 {head_cnt}회가 측정되었습니다.",
+        )
+        fact = normal_facts[variant_index % len(normal_facts)]
+
+    if scenario == "low_observability":
+        interps = (
+            "화면에서 얼굴이나 눈이 가려진 미측정 구간이 길어 현재 수치만으로 실제 졸음 빈도를 단정하기는 어렵습니다.",
+            "조명 역광이나 손 가림 또는 카메라 각도 이탈로 인해 유효 관측 비율이 낮게 나타난 상태로 보입니다.",
+            "관측 가능 구간이 충분히 확보되지 않아 눈 감김과 자세 변화를 정확히 해석하는 데 한계가 있습니다.",
+        )
+        actions = (
+            "다음 학습 전에는 카메라 렌즈 높이와 책상 조명을 다시 조정하고 10초 정면 보정을 마친 뒤 30분 단위로 학습을 계획해 보세요.",
+            "얼굴 정면이 화면 중앙에 보이도록 거치대 위치를 점검하고, 잠시 5분간 스트레칭으로 휴식한 후 세션을 다시 시작해 보세요.",
+            "안경 반사나 손으로 턱을 괴는 자세가 카메라는 가리지 않는지 점검하고, 정면 보정을 새로 수행해 관측 안정성을 유지해 보세요.",
+        )
+    elif scenario == "short_session":
+        interps = (
+            "전체 공부 시간이 15분 미만으로 짧아 장시간 집중 흐름이나 피로 누적 여부를 판단하기에는 아직 초기 단계입니다.",
+            "짧은 탐색 또는 초기 점검 성격의 세션으로 보이며, 현재까지는 급격한 졸음 징후 없이 워밍업을 마친 상태입니다.",
+            "관측된 시간이 짧아 현재 수치만으로 피로도를 평가하기 어렵지만, 본격적인 공부 구간으로 넘어가기 좋은 시점입니다.",
+        )
+        actions = (
+            "다음 세션은 25분 집중 공부와 5분 휴식을 한 묶음으로 계획하여 일정한 학습 리듬을 유지해 보세요.",
+            "목표 분량을 30분 단위로 나누어 이어서 진행하고, 한 구간이 끝날 때마다 가벼운 목 스트레칭으로 쉬어 보세요.",
+            "본격적인 학습에 들어가기 전 자세와 화면 각도를 한 번 더 점검하고, 25~30분 연속 공부 후 짧은 휴식을 실천해 보세요.",
+        )
+    elif scenario == "late_increase":
+        first_cnt = summary.windows[0]["eye_closure_count"] if summary.windows else 0
+        last_cnt = summary.windows[-1]["eye_closure_count"] if summary.windows else eye_cnt
+        interps = (
+            f"초반 구간(눈 감김 {first_cnt}회)에 비해 후반 구간(눈 감김 {last_cnt}회)에서 눈 감김 의심이 뚜렷하게 증가해 시간이 지날수록 피로가 쌓인 양상입니다.",
+            f"세션 전반부(눈 감김 {first_cnt}회)보다 후반부(눈 감김 {last_cnt}회)에 눈 감김 빈도가 높아져 연속 학습에 따른 후반 피로 누적이 의심됩니다.",
+            f"첫 구간에서는 눈 감김이 {first_cnt}회로 적었으나 마지막 구간에서 {last_cnt}회로 늘어나 후반부 각성 유지가 어려워진 신호로 해석됩니다.",
+        )
+        actions = (
+            "다음 세션을 시작하기 전 10분간 자리에서 일어나 환기하며 휴식하고, 이후에는 피로가 몰리는 35~40분 지점마다 미리 5분 휴식을 배치해 보세요.",
+            "연속 공부 시간을 30분 단위로 나누어 후반 피로를 줄이고, 중간 휴식마다 먼 곳을 바라보거나 가벼운 스트레칭을 권장합니다.",
+            "지금은 무리해서 연장하기보다 10분 정도 눈을 쉬게 하며 수분을 보충하고, 다음 학습 계획은 짧은 구간 여러 개로 나누어 조정해 보세요.",
+        )
+    elif scenario == "repeated_drowsiness":
+        interps = (
+            "2초 이상 지속되는 눈 감김 의심 신호가 여러 차례 반복되어 현재 눈의 피로와 졸음 부담이 상당히 높은 상태로 보입니다.",
+            "짧은 깜박임을 넘어선 지속 눈 감김이 누적되고 있어 그대로 공부를 이어가면 학습 효율이 떨어질 가능성이 큽니다.",
+            "반복적인 눈 감김 의심 이벤트가 관측되어 현재 휴식 없이 집중을 유지하기에는 피로 신호가 뚜렷한 구간입니다.",
+        )
+        actions = (
+            "즉시 10~15분간 공부를 멈추고 실내를 환기하거나 가벼운 스트레칭으로 휴식한 뒤, 다음 학습은 20~25분 단위로 짧게 나누어 보세요.",
+            "자리에서 일어나 찬물을 마시거나 가볍게 걸으며 10분 이상 충분히 쉬고, 재개 후에는 암기보다 가벼운 복습 위주로 학습 계획을 조절해 보세요.",
+            "눈과 목의 긴장을 풀 수 있도록 15분간 휴식을 취하고, 다음 세션에서는 알림음을 켜 둔 채 25분 단위로 호흡을 짧게 유지해 보세요.",
+        )
+    elif scenario == "head_down_focused":
+        interps = (
+            "눈 감김 횟수에 비해 3초 이상 지속된 고개 숙임이 자주 나타나 교재 필기나 문제 풀이에 몰두하며 고개를 깊이 숙인 시간이 많았던 것으로 보입니다.",
+            "졸음에 의한 눈 감김보다는 필기·독서 과정에서 고개를 아래로 숙인 자세가 반복되어 목과 어깨에 피로가 누적되었을 가능성이 있습니다.",
+            "지속 눈 감김은 적지만 고개 숙임 이벤트가 집중적으로 기록되어, 장시간 숙인 자세로 인한 체형 부담을 점검할 필요가 있습니다.",
+        )
+        actions = (
+            "교재나 노트를 볼 때 독서대를 사용해 시선 높이를 올리고, 다음 세션 전 5분간 목과 어깨를 뒤로 젖히는 스트레칭으로 휴식해 보세요.",
+            "고개를 20도 이상 깊이 숙이는 자세가 길어지지 않도록 책상 높이와 거치대를 조정하고, 30분마다 자세를 펴며 가볍게 쉬어 보세요.",
+            "필기 후에는 정면 자세로 돌아와 재보정을 수행하거나 5분간 목 근육을 풀어 주는 휴식을 취한 뒤 다음 학습 계획을 이어가 보세요.",
+        )
+    elif scenario == "with_break":
+        interps = (
+            "공부 중간에 적절한 휴식 시간을 포함하여 장시간 연속 학습에서 오는 피로 누적을 안정적으로 완화하며 진행한 세션입니다.",
+            "학습과 휴식을 병행하면서 눈 감김과 자세 흐트러짐을 비교적 낮은 수준으로 관리한 균형 잡힌 흐름으로 해석됩니다.",
+            "중간 휴식을 활용해 집중 리듬을 회복한 덕분에 관측 구간 전반에서 과도한 피로 신호 없이 학습을 마친 것으로 보입니다.",
+        )
+        actions = (
+            "다음 세션에서도 현재처럼 40~50분 공부 후 5~10분 휴식하는 리듬을 유지하고, 쉬는 시간에는 화면에서 눈을 떼고 스트레칭을 병행해 보세요.",
+            "지금의 공부·휴식 비율을 그대로 유지하되, 다음 구간을 시작하기 전 가볍게 환기하며 컨디션을 점검해 보세요.",
+            "좋은 휴식 습관을 이어가면서 다음 목표 분량도 45분 학습·10분 휴식 단위로 나누어 무리 없이 계획을 진행해 보세요.",
+        )
+    elif scenario == "long_continuous":
+        interps = (
+            "1시간 이상 휴식 없이 연속으로 공부하여 이번 세션에서는 눈 감김이 적었더라도 직후 구간에서 급격한 피로가 나타날 수 있습니다.",
+            "장시간 쉬지 않고 학습을 지속해 현재 누적된 눈과 목의 긴장이 다음 세션의 집중도를 떨어뜨릴 우려가 있습니다.",
+            "오랜 시간 자리에서 연속 학습을 이어가 관측 수치는 양호하더라도 잠재적인 피로가 쌓여 있을 가능성이 높습니다.",
+        )
+        actions = (
+            "다음 공부를 시작하기 전에 반드시 10~15분간 충분한 휴식을 취하고, 이후 세션부터는 45~50분마다 짧은 휴식 시간을 미리 계획해 보세요.",
+            "지금 바로 자리에서 일어나 스트레칭과 환기로 몸을 쉬게 하고, 다음 학습은 한 번에 길게 하기보다 두 구간으로 나누어 조절해 보세요.",
+            "연속 공부 뒤에는 눈의 피로를 풀기 위해 10분 이상 먼 곳을 보며 휴식하고, 다음 세션에서는 중간 휴식 알림을 활용해 보세요.",
+        )
+    else:
+        interps = (
+            "관측 구간 동안 지속적인 눈 감김이나 급격한 자세 흐트러짐이 적게 나타나 전반적으로 안정적인 학습 리듬을 유지했습니다.",
+            "눈 감김 의심과 고개 숙임 빈도가 모두 낮게 유지되어 무리 없는 자세와 호흡으로 목표한 공부를 수행한 것으로 보입니다.",
+            "유효 관측 비율이 양호하고 뚜렷한 피로 누적 신호가 적어 현재 학습 환경과 자세가 잘 유지되고 있는 상태입니다.",
+        )
+        actions = (
+            "현재의 바른 자세와 조명 환경을 유지하면서 5분간 가볍게 눈과 목을 쉬게 한 뒤 다음 계획한 학습 분량을 이어가 보세요.",
+            "짧게 수분을 보충하며 5분 정도 휴식한 뒤, 지금처럼 40~50분 단위의 안정적인 학습 주기를 유지해 보세요.",
+            "가벼운 스트레칭으로 컨디션을 점검한 후 현재의 집중 리듬을 살려 다음 목표 과목을 차분히 진행해 보세요.",
+        )
+
+    interp = interps[variant_index % len(interps)]
+    action = actions[(variant_index // len(interps) + variant_index) % len(actions)]
+    return f"{fact} {interp} {action}"
+
+
+
 def validate_coaching_text(summary_or_dict: SessionSummary | dict, text: str) -> list[str]:
     """Validate raw model coaching text against SessionSummary faithfulness and safety rules."""
     summary = coerce_summary(summary_or_dict)
