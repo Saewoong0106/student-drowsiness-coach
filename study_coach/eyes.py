@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from math import dist, isfinite
 
+from .contracts import FrameMeasurement
+
 LEFT_EYE = (362, 385, 387, 263, 373, 380)
 RIGHT_EYE = (33, 160, 158, 133, 153, 144)
 
@@ -18,6 +20,24 @@ class EyeMeasurement:
         if self.left is None or self.right is None:
             return None
         return (self.left + self.right) / 2
+
+    def to_frame_measurement(
+        self,
+        session_id: str,
+        timestamp_s: float,
+        *,
+        pitch_delta_deg: float | None = None,
+        pose_valid: bool | None = None,
+        invalid_reason: str | None = None,
+    ) -> FrameMeasurement:
+        return FrameMeasurement.from_measurements(
+            session_id=session_id,
+            timestamp_s=timestamp_s,
+            eye=self,
+            pitch_delta_deg=pitch_delta_deg,
+            pose_valid=pose_valid,
+            invalid_reason=invalid_reason,
+        )
 
 
 def eye_ratio(points, minimum_width=12.0):
@@ -47,3 +67,47 @@ def measure_eyes(landmarks, width, height):
     if None in values:
         return EyeMeasurement(None, None, "eye_geometry_unreliable")
     return EyeMeasurement(*values)
+
+
+def measure_frame(
+    session_id: str,
+    timestamp_s: float,
+    landmarks,
+    width: int,
+    height: int,
+    *,
+    pitch_delta_deg: float | None = None,
+    pose_valid: bool | None = None,
+    invalid_reason: str | None = None,
+    pose_measurer=None,
+) -> FrameMeasurement:
+    """Build a FrameMeasurement from landmarks and an optional head-pose input/callback (T04)."""
+    eye = measure_eyes(landmarks, width, height)
+    if pose_measurer is not None and pitch_delta_deg is None:
+        pose_output = pose_measurer(landmarks, width, height)
+        if isinstance(pose_output, dict):
+            pitch_delta_deg = pose_output.get("pitch_delta_deg")
+            if pose_valid is None:
+                pose_valid = pose_output.get("pose_valid")
+            if invalid_reason is None:
+                invalid_reason = pose_output.get("invalid_reason")
+        elif isinstance(pose_output, tuple):
+            if len(pose_output) >= 1:
+                pitch_delta_deg = pose_output[0]
+            if len(pose_output) >= 2 and pose_valid is None:
+                pose_valid = pose_output[1]
+            if len(pose_output) >= 3 and invalid_reason is None:
+                invalid_reason = pose_output[2]
+        else:
+            pitch_delta_deg = getattr(pose_output, "pitch_delta_deg", pose_output)
+            if pose_valid is None and hasattr(pose_output, "pose_valid"):
+                pose_valid = pose_output.pose_valid
+            if invalid_reason is None and hasattr(pose_output, "invalid_reason"):
+                invalid_reason = pose_output.invalid_reason
+    return eye.to_frame_measurement(
+        session_id=session_id,
+        timestamp_s=timestamp_s,
+        pitch_delta_deg=pitch_delta_deg,
+        pose_valid=pose_valid,
+        invalid_reason=invalid_reason,
+    )

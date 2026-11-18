@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import sqlite3
 
+from .contracts import CoachingResult
+
 
 class SessionStore:
     def __init__(self, path):
@@ -21,6 +23,11 @@ class SessionStore:
                 event_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL REFERENCES study_sessions(session_id),
                 event_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS coaching_results (
+                session_id TEXT PRIMARY KEY REFERENCES study_sessions(session_id),
+                status TEXT NOT NULL,
+                coaching_json TEXT NOT NULL
             );
         """)
 
@@ -48,16 +55,49 @@ class SessionStore:
         events.sort(key=lambda event: event["condition_started_s"])
         return json.loads(row[0]), events
 
+    def save_coaching(self, result):
+        coaching = result if isinstance(result, CoachingResult) else CoachingResult.from_dict(result)
+        payload = coaching.to_dict()
+        with self.connection:
+            self.connection.execute(
+                """INSERT INTO coaching_results VALUES (?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET status=excluded.status, coaching_json=excluded.coaching_json""",
+                (coaching.session_id, coaching.status, json.dumps(payload, ensure_ascii=False)),
+            )
+
+    def read_coaching(self, session_id):
+        row = self.connection.execute(
+            "SELECT coaching_json FROM coaching_results WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        return None if row is None else json.loads(row[0])
+
     def export(self, session_id, destination):
         summary, events = self.read(session_id)
+        coaching = self.read_coaching(session_id)
         destination = Path(destination)
         destination.mkdir(parents=True, exist_ok=True)
         summary_path = destination / f"{session_id}.json"
         event_path = destination / f"{session_id}-events.csv"
-        summary_path.write_text(json.dumps({"summary": summary, "events": events}, ensure_ascii=False, indent=2), encoding="utf-8")
-        fields = ["event_id", "session_id", "type", "condition_started_s", "confirmed_s", "ended_s", "interrupted_reason"]
+        export_payload = {"summary": summary, "events": events}
+        if coaching is not None:
+            export_payload["coaching"] = coaching
+        summary_path.write_text(
+            json.dumps(export_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        fields = [
+            "event_id",
+            "session_id",
+            "type",
+            "condition_started_s",
+            "confirmed_s",
+            "ended_s",
+            "interrupted_reason",
+            "config_version",
+        ]
         with event_path.open("w", encoding="utf-8-sig", newline="") as output:
-            writer = csv.DictWriter(output, fieldnames=fields)
+            writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(events)
         return summary_path, event_path
