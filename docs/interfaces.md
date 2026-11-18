@@ -2,7 +2,7 @@
 
 초기 제안 v0.1입니다. 실제 구현 전 담당자들이 확인하고 변경 사항은 PR로 함께 수정합니다. 시간 단위는 초, 각도는 도, 비율은 0~1로 통일합니다. 화면에서만 분·퍼센트로 바꿉니다.
 
-현재 `study_coach/contracts.py`와 `study_coach/session.py`에 `FrameMeasurement`, `Event`, `SessionSummary`(`TimeWindow`), `CoachingResult` 데이터 계약과 눈 감김(2초 진입·1초 회복)·고개 숙임(`pitch_delta_deg` 20도 이상 3초 진입·15도 미만 1초 회복) 판정 로직 및 고개 각도 입력 인터페이스(`measure_frame`, `StudySession.step_measurement`)가 구현되어 있습니다. 영상에서 실제 고개 각도를 추출하는 측정 모듈(#4)과 KoGPT2 코칭 생성기(#8)는 후속 단계에서 이 인터페이스에 연결합니다.
+현재 `study_coach/contracts.py`, `study_coach/session.py`, `study_coach/coaching.py`, `study_coach/coaching_data.py`에 `FrameMeasurement`, `Event`, `SessionSummary`(`TimeWindow`), `CoachingResult` 데이터 계약과 눈 감김(2초 진입·1초 회복)·고개 숙임(`pitch_delta_deg` 20도 이상 3초 진입·15도 미만 1초 회복) 판정 로직, 고개 각도 입력 인터페이스(`measure_frame`, `StudySession.step_measurement`), 그리고 규칙 기반 코칭·KoGPT2/LoRA 추론·출력 수치 검증·대체 응답 및 학습/평가 파이프라인(`scripts/coaching_dataset.py`, `scripts/train_coaching_lora.py`, `scripts/evaluate_coaching.py`)이 구현되어 있습니다. 영상에서 실제 고개 각도를 추출하는 측정 모듈(#4)과 검수된 800건 본 학습 가중치(#7, #8)는 이 인터페이스에 그대로 연결합니다.
 
 ## 영상 측정 담당이 판정 담당에게 전달
 
