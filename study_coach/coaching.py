@@ -662,7 +662,7 @@ class KoGPT2Coach:
             "pad_token_id": self.tokenizer.pad_token_id or self.tokenizer.eos_token_id or 0,
             "eos_token_id": self.tokenizer.eos_token_id,
             "do_sample": self.do_sample,
-            "repetition_penalty": 1.15,
+            "no_repeat_ngram_size": 5,
         }
         if self.do_sample:
             gen_kwargs["temperature"] = self.temperature

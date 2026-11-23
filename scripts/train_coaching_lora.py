@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -215,12 +216,22 @@ def run_training_pipeline(args) -> dict:
             )
             for rec in train_records
         ]
+        tokenized_val = [
+            encode_causal_lm_sample(
+                rec,
+                tokenizer=tokenizer,
+                max_length=args.max_length,
+                pad_token_id=tokenizer.pad_token_id or 3,
+            )
+            for rec in val_records
+        ]
         optimizer = AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
         loss_fn = CrossEntropyLoss(ignore_index=IGNORE_INDEX)
         training_log = []
+        train_start = time.perf_counter()
 
-        model.train()
         for epoch in range(1, args.epochs + 1):
+            model.train()
             optimizer.zero_grad()
             epoch_losses = []
             for start_idx in range(0, len(tokenized_train), args.batch_size):
@@ -243,8 +254,30 @@ def run_training_pipeline(args) -> dict:
                     optimizer.zero_grad()
 
             mean_loss = sum(epoch_losses) / max(1, len(epoch_losses))
-            training_log.append({"epoch": epoch, "train_loss": round(mean_loss, 4)})
+            log_entry = {"epoch": epoch, "train_loss": round(mean_loss, 4)}
 
+            if tokenized_val:
+                model.eval()
+                val_losses = []
+                with torch.no_grad():
+                    for start_idx in range(0, len(tokenized_val), args.batch_size):
+                        batch_slice = tokenized_val[start_idx : start_idx + args.batch_size]
+                        batch = collate_causal_lm_batch(batch_slice, pad_token_id=tokenizer.pad_token_id or 3)
+                        input_ids = torch.tensor(batch["input_ids"], dtype=torch.long, device=device)
+                        attention_mask = torch.tensor(batch["attention_mask"], dtype=torch.long, device=device)
+                        labels = torch.tensor(batch["labels"], dtype=torch.long, device=device)
+                        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                        shift_logits = outputs.logits[..., :-1, :].contiguous()
+                        shift_labels = labels[..., 1:].contiguous()
+                        v_loss = loss_fn(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+                        val_losses.append(float(v_loss.detach().cpu().item()))
+                log_entry["val_loss"] = round(sum(val_losses) / max(1, len(val_losses)), 4)
+
+            training_log.append(log_entry)
+            print(f"[Epoch {epoch}/{args.epochs}] {log_entry}", flush=True)
+
+        metadata["training_elapsed_seconds"] = round(time.perf_counter() - train_start, 3)
+        metadata["output_dir"] = str(output_dir)
         model.save_pretrained(str(output_dir))
         tokenizer.save_pretrained(str(output_dir))
         metadata["training_log"] = training_log
@@ -257,6 +290,8 @@ def run_training_pipeline(args) -> dict:
     sample_result = reloaded.generate(train_records[0].summary())
     metadata["reload_verified"] = sample_result.matches_session(train_records[0].summary().session_id)
     metadata["reload_sample_status"] = sample_result.status
+    metadata["reload_sample_is_fallback"] = sample_result.is_fallback
+    metadata["reload_sample_raw_text"] = sample_result.raw_text
     meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     return metadata
 

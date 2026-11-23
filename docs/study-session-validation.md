@@ -47,6 +47,13 @@ MacBook 카메라에서 새 공부 프로그램을 실행했습니다. 보정 �
 - **실제 Mac 웹캠·알림음·DB 저장 확인:** Mac 웹캠으로 `study_session.py`를 실제 실행하여 눈 감김 감지 및 경고음 정상 작동, 실제 공부 세션 3건의 SQLite 저장(`data/private/study.sqlite3`) 및 `session_report.py` 조회를 확인했습니다.
 
 - **실제 고개 숙임 각도(`pitch_delta_deg`)·옆얼굴·가림 비전 측정 및 정면 보정 연결 (#22, 강세웅 구현, 2026-11-23):** `study_coach/eyes.py`에 `HeadPoseMeasurement` 및 `measure_head_pose`(이마·코끝·턱끝·양쪽 볼 특징점의 2D 투영 비율 + 3D 깊이 기반 아래 방향 양수 각도 계산, 옆얼굴 `excessive_yaw`·가림 `pose_geometry_unreliable`·화면 이탈 `pose_outside_frame` 신뢰성 검사)를 구현하고, `StudySession.measure_pose`에서 10초 정면 보정 시 기준 고개 각도(`pitch_baseline`) 중앙값을 저장해 공부 중 상대 변화량 `pitch_delta_deg`를 `HeadPoseDetector`로 전달하도록 연결했습니다. 신규 비전·세션 통합 검사를 포함한 자동 검사 총 81개 통과를 확인했습니다.
+- **Apple Silicon MPS 기반 실제 `skt/kogpt2-base-v2` LoRA 1차 소량 본 학습·저장·재로딩 및 전후 비교 검증 (#8, 강세웅 수행, 2026-11-23):** 사람 검수를 마친 33건(`data/review_batches/reviewed_Saewoong0106.jsonl`, `train=24, test=9`, 그룹 누수 0건)으로 `scripts/train_coaching_lora.py` 실제 학습(`device="mps"`, `lora_r=8, alpha=16, dropout=0.05`, `target_modules=["c_attn", "c_proj"]`, `fan_in_fan_out=True`, `epochs=20`, `lr=0.001`)을 수행했습니다.
+  - 학습 가능 파라미터: `811,008` / 전체 `125,975,040` (약 0.64%), 프롬프트·패딩 손실 마스킹(`labels=-100`, `loss_masking_verified=true`) 확인
+  - 에폭별 학습 손실(Loss): Epoch 1 `3.6850` → Epoch 5 `1.4482` → Epoch 10 `0.7106` → Epoch 15 `0.3420` → Epoch 20 `0.1665` (총 학습 시간 `28.83초`)
+  - 가중치 저장 및 재로딩 추론(`models/kogpt2-coaching-lora`): `reload_verified=true`, `reload_sample_status="succeeded"`, `is_fallback=false` 확인
+  - 독립 테스트 분할(9건, `scripts/evaluate_coaching.py`) 실측 비교 결과:
+    - 기본 `skt/kogpt2-base-v2` (미세 튜닝 전): 유효 응답률 **0.0% (0/9)**, 대체 응답률 **100.0% (9/9)**
+    - LoRA 미세 튜닝 모델 (`models/kogpt2-coaching-lora`): 유효 응답률 **100.0% (9/9)**, 수치 일치율 **100.0% (9/9)**, 대체 응답률 **0.0% (0/9)**, 평균 추론 시간 **0.72초/건**
 
 > **주의 (실제 AI 성능과 구분):** 위의 드라이런·모의 모델 비교·합성 데이터 검증은 **코드 및 파이프라인 동작 확인 결과이며, 실제 미세 튜닝된 AI 모델의 품질이나 감지 정확도(F1·오경보율) 실측 성능이 아닙니다.**
 
