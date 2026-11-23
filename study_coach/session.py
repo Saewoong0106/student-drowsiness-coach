@@ -16,6 +16,7 @@ from .contracts import (
     TimeWindow,
     merged_interval_seconds,
 )
+from .eyes import HeadPoseMeasurement, measure_head_pose
 
 
 def _is_finite_number(value):
@@ -219,15 +220,18 @@ class StudySession:
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.source = source
         self.goal = goal
-        self.pose_measurer = pose_measurer
+        self._custom_pose_measurer = pose_measurer
+        self.pose_measurer = pose_measurer if pose_measurer is not None else self.measure_pose
         self.status = "running"
         self.ended_at = None
         self.detector = EyeDetector(self.settings, self.session_id)
         self.head_detector = HeadPoseDetector(self.settings, self.session_id)
         self.baseline = None
+        self.pitch_baseline = None
         self.calibration_history = []
         self.calibration_started = None
         self.calibration_values = []
+        self.pose_calibration_values = []
         self.calibration_observed = 0.0
         self.calibration_message = "look_forward"
         self.paused = False
@@ -243,6 +247,23 @@ class StudySession:
         self.pitch_delta_deg = None
         self.last_measurement = None
         self.last_triggered = {"eye_closure_suspected": False, "head_down": False}
+
+    def measure_pose(self, landmarks, width: int, height: int) -> HeadPoseMeasurement:
+        """Default head-pose measurer that records frontal calibration pitch and returns relative delta (#22)."""
+        measurement = measure_head_pose(
+            landmarks,
+            width,
+            height,
+            baseline_pitch_deg=self.pitch_baseline,
+        )
+        if (
+            self.baseline is None
+            and not self.paused
+            and measurement.pose_valid
+            and measurement.raw_pitch_deg is not None
+        ):
+            self.pose_calibration_values.append(float(measurement.raw_pitch_deg))
+        return measurement
 
     def _advance(self, t, valid, pose_valid=False):
         if not _is_finite_number(t) or t < 0 or (self.last_time is not None and t < self.last_time):
@@ -280,6 +301,7 @@ class StudySession:
     def _clear_calibration(self):
         self.calibration_started = None
         self.calibration_values = []
+        self.pose_calibration_values = []
         self.calibration_observed = 0.0
 
     def step_measurement(self, measurement: FrameMeasurement) -> bool:
@@ -363,11 +385,31 @@ class StudySession:
                 baseline = median(self.calibration_values) if self.calibration_values else 0
                 if enough and baseline >= self.settings.minimum_baseline:
                     self.baseline = baseline
+                    had_pose_samples = bool(self.pose_calibration_values)
+                    self.pitch_baseline = (
+                        median(self.pose_calibration_values)
+                        if had_pose_samples
+                        else 0.0
+                    )
+                    if had_pose_samples and valid_pose and pitch is not None:
+                        pitch = pitch - self.pitch_baseline
+                        self.pitch_delta_deg = pitch
+                        self.last_measurement = FrameMeasurement(
+                            session_id=self.session_id,
+                            timestamp_s=t,
+                            eye_valid=valid_eye,
+                            pose_valid=valid_pose,
+                            ear_left=ear,
+                            ear_right=ear,
+                            pitch_delta_deg=pitch,
+                            invalid_reason=invalid_reason,
+                        )
                     self.phase = "studying"
                     self.calibration_message = "complete"
                     self.calibration_history.append({
                         "time_s": t,
                         "baseline": baseline,
+                        "pitch_baseline": self.pitch_baseline,
                         "samples": len(self.calibration_values),
                     })
                     self.detector.update(t, ear, baseline)
@@ -398,6 +440,7 @@ class StudySession:
         self.detector.interrupt("recalibration")
         self.head_detector.interrupt("recalibration")
         self.baseline = None
+        self.pitch_baseline = None
         self.paused = False
         self.phase = "calibrating"
         self.last_valid = False

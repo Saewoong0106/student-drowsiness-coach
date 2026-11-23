@@ -16,7 +16,19 @@ from study_coach.contracts import (
     TimeWindow,
     merged_interval_seconds,
 )
-from study_coach.eyes import LEFT_EYE, RIGHT_EYE, eye_ratio, measure_eyes, measure_frame
+from study_coach.eyes import (
+    CHIN_BOTTOM,
+    FOREHEAD_TOP,
+    LEFT_CHEEK,
+    LEFT_EYE,
+    NOSE_TIP,
+    RIGHT_CHEEK,
+    RIGHT_EYE,
+    eye_ratio,
+    measure_eyes,
+    measure_frame,
+    measure_head_pose,
+)
 from study_coach.session import EyeDetector, HeadPoseDetector, Settings, StudySession
 from study_coach.storage import SessionStore
 
@@ -620,6 +632,176 @@ class SessionHeadAndContractIntegrationTests(unittest.TestCase):
                 self.assertTrue(all(row["config_version"] == DEFAULT_CONFIG_VERSION for row in rows))
             finally:
                 store.close()
+
+
+def make_face_landmarks(
+    *,
+    pitch_deg: float = 0.0,
+    yaw_shift_px: float = 0.0,
+    eye_open: bool = True,
+    occlude_eyes: bool = False,
+    occlude_chin: bool = False,
+    width: int = 640,
+    height: int = 480,
+):
+    """Build synthetic 478-point face landmarks with realistic 2D+3D head pitch, yaw, and occlusion (#22)."""
+    landmarks = [SimpleNamespace(x=0.5, y=0.5, z=0.0) for _ in range(478)]
+    v_offset = 3.0 if eye_open else 1.0
+    for indices, origin in ((RIGHT_EYE, 240.0), (LEFT_EYE, 370.0)):
+        points = [
+            (0.0, 0.0),
+            (10.0, -v_offset),
+            (20.0, -v_offset),
+            (30.0, 0.0),
+            (20.0, v_offset),
+            (10.0, v_offset),
+        ]
+        for index, (dx, dy) in zip(indices, points):
+            if occlude_eyes:
+                landmarks[index] = SimpleNamespace(x=320.0 / width, y=195.0 / height, z=0.0)
+            else:
+                landmarks[index] = SimpleNamespace(
+                    x=(origin + dx) / width,
+                    y=(195.0 + dy) / height,
+                    z=0.0,
+                )
+
+    forehead_y = 140.0
+    chin_y = 145.0 if occlude_chin else 340.0
+    face_height = chin_y - forehead_y
+    nose_ratio = 0.53 + (pitch_deg / 150.0)
+    nose_y = forehead_y + nose_ratio * face_height
+    dz = math.tan(math.radians(pitch_deg)) * face_height
+
+    landmarks[FOREHEAD_TOP] = SimpleNamespace(x=320.0 / width, y=forehead_y / height, z=(-0.5 * dz) / width)
+    landmarks[NOSE_TIP] = SimpleNamespace(
+        x=(320.0 + yaw_shift_px) / width,
+        y=nose_y / height,
+        z=0.0,
+    )
+    landmarks[CHIN_BOTTOM] = SimpleNamespace(x=320.0 / width, y=chin_y / height, z=(0.5 * dz) / width)
+    landmarks[RIGHT_CHEEK] = SimpleNamespace(x=220.0 / width, y=240.0 / height, z=0.0)
+    landmarks[LEFT_CHEEK] = SimpleNamespace(x=420.0 / width, y=240.0 / height, z=0.0)
+    return landmarks
+
+
+class VisionHeadPoseAndSessionTests(unittest.TestCase):
+    def test_measure_head_pose_downward_positive_and_baseline_correction(self):
+        neutral = measure_head_pose(make_face_landmarks(pitch_deg=0.0), 640, 480)
+        self.assertTrue(neutral.pose_valid)
+        self.assertIsNone(neutral.invalid_reason)
+        self.assertAlmostEqual(neutral.pitch_delta_deg, 0.0, places=3)
+
+        down = measure_head_pose(make_face_landmarks(pitch_deg=24.0), 640, 480)
+        self.assertTrue(down.pose_valid)
+        self.assertAlmostEqual(down.pitch_delta_deg, 24.0, places=3)
+
+        up = measure_head_pose(make_face_landmarks(pitch_deg=-12.0), 640, 480)
+        self.assertTrue(up.pose_valid)
+        self.assertAlmostEqual(up.pitch_delta_deg, -12.0, places=3)
+
+        # Baseline correction subtracts calibrated frontal angle
+        calibrated_down = measure_head_pose(
+            make_face_landmarks(pitch_deg=29.0),
+            640,
+            480,
+            baseline_pitch_deg=5.0,
+        )
+        self.assertTrue(calibrated_down.pose_valid)
+        self.assertAlmostEqual(calibrated_down.pitch_delta_deg, 24.0, places=3)
+
+    def test_measure_head_pose_rejects_side_face_occlusion_and_invalid_landmarks(self):
+        self.assertEqual(measure_head_pose([], 640, 480).invalid_reason, "face_missing")
+        self.assertEqual(
+            measure_head_pose([SimpleNamespace(x=0.5, y=0.5)] * 10, 640, 480).invalid_reason,
+            "incomplete_landmarks",
+        )
+
+        outside = make_face_landmarks(pitch_deg=0.0)
+        outside[CHIN_BOTTOM] = SimpleNamespace(x=0.5, y=1.25, z=0.0)
+        self.assertFalse(measure_head_pose(outside, 640, 480).pose_valid)
+        self.assertEqual(measure_head_pose(outside, 640, 480).invalid_reason, "pose_outside_frame")
+
+        side_face = measure_head_pose(make_face_landmarks(pitch_deg=10.0, yaw_shift_px=80.0), 640, 480)
+        self.assertFalse(side_face.pose_valid)
+        self.assertIsNone(side_face.pitch_delta_deg)
+        self.assertEqual(side_face.invalid_reason, "excessive_yaw")
+
+        occluded_chin = measure_head_pose(make_face_landmarks(pitch_deg=10.0, occlude_chin=True), 640, 480)
+        self.assertFalse(occluded_chin.pose_valid)
+        self.assertIsNone(occluded_chin.pitch_delta_deg)
+        self.assertEqual(occluded_chin.invalid_reason, "pose_geometry_unreliable")
+
+    def test_end_to_end_landmark_calibration_writing_occlusion_and_recovery(self):
+        session = StudySession(
+            Settings(calibration_seconds=1.0, calibration_samples=5),
+            source="synthetic_vision",
+            goal="고개 각도 및 필기·가림 판정 연결 검증",
+        )
+        # 1. Calibrate at user's natural neutral pitch (+5.0 deg) for 0.0~1.0s
+        for i in range(11):
+            t = round(i / 10.0, 2)
+            lm = make_face_landmarks(pitch_deg=5.0, eye_open=True)
+            frame = measure_frame(session.session_id, t, lm, 640, 480, pose_measurer=session.pose_measurer)
+            self.assertFalse(session.step_measurement(frame))
+
+        self.assertIsNotNone(session.baseline)
+        self.assertAlmostEqual(session.pitch_baseline, 5.0, places=2)
+        self.assertEqual(session.phase, "studying")
+
+        # 2. Upright posture (+5.0 deg raw -> 0.0 deg delta) from 1.1~2.0s triggers nothing
+        for i in range(11, 21):
+            t = round(i / 10.0, 2)
+            lm = make_face_landmarks(pitch_deg=5.0, eye_open=True)
+            frame = measure_frame(session.session_id, t, lm, 640, 480, pose_measurer=session.pose_measurer)
+            self.assertAlmostEqual(frame.pitch_delta_deg, 0.0, places=2)
+            self.assertFalse(session.step_measurement(frame))
+        self.assertEqual(len(session.head_detector.events), 0)
+
+        # 3. Writing / reading posture: raw +28.0 deg (+23.0 deg delta >= 20 deg) with eyes occluded for 3.0s (2.1~5.1s)
+        alarms = []
+        for i in range(21, 52):
+            t = round(i / 10.0, 2)
+            lm = make_face_landmarks(pitch_deg=28.0, occlude_eyes=True)
+            frame = measure_frame(session.session_id, t, lm, 640, 480, pose_measurer=session.pose_measurer)
+            self.assertFalse(frame.eye_valid)
+            self.assertTrue(frame.pose_valid)
+            self.assertAlmostEqual(frame.pitch_delta_deg, 23.0, places=2)
+            alarms.append(session.step_measurement(frame))
+
+        self.assertEqual(sum(alarms), 1)
+        self.assertEqual(len(session.head_detector.events), 1)
+        self.assertEqual(len(session.detector.events), 0)
+        self.assertEqual(session.head_detector.events[0].condition_started_s, 2.1)
+        self.assertEqual(session.head_detector.events[0].confirmed_s, 5.1)
+
+        # 4. Recover head posture to +10.0 deg raw (+5.0 deg delta < 15 deg) for 1.0s (5.2~6.2s)
+        for i in range(52, 63):
+            t = round(i / 10.0, 2)
+            lm = make_face_landmarks(pitch_deg=10.0, eye_open=True)
+            frame = measure_frame(session.session_id, t, lm, 640, 480, pose_measurer=session.pose_measurer)
+            self.assertFalse(session.step_measurement(frame))
+
+        self.assertIsNone(session.head_detector.active)
+        self.assertAlmostEqual(session.head_detector.events[0].ended_s, 5.2)
+
+        # 5. Start another head-down event (6.3~9.3s) and interrupt with side-face / yaw occlusion at 9.4s
+        for i in range(63, 94):
+            t = round(i / 10.0, 2)
+            lm = make_face_landmarks(pitch_deg=29.0, eye_open=True)
+            frame = measure_frame(session.session_id, t, lm, 640, 480, pose_measurer=session.pose_measurer)
+            session.step_measurement(frame)
+        self.assertEqual(len(session.head_detector.events), 2)
+        self.assertIsNotNone(session.head_detector.active)
+
+        yaw_lm = make_face_landmarks(pitch_deg=29.0, yaw_shift_px=80.0, eye_open=True)
+        yaw_frame = measure_frame(session.session_id, 9.4, yaw_lm, 640, 480, pose_measurer=session.pose_measurer)
+        self.assertFalse(yaw_frame.pose_valid)
+        self.assertEqual(yaw_frame.invalid_reason, "excessive_yaw")
+        self.assertFalse(session.step_measurement(yaw_frame))
+        self.assertIsNone(session.head_detector.active)
+        self.assertAlmostEqual(session.head_detector.events[1].ended_s, 9.3)
+        self.assertEqual(session.head_detector.events[1].interrupted_reason, "unobservable")
 
 
 if __name__ == "__main__":

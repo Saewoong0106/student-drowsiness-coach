@@ -44,10 +44,26 @@ from .contracts import (
     merge_intervals,
     merged_interval_seconds,
 )
-from .eyes import EyeMeasurement, LEFT_EYE, RIGHT_EYE, eye_ratio, measure_eyes, measure_frame
+from .eyes import (
+    CHIN_BOTTOM,
+    EyeMeasurement,
+    FOREHEAD_TOP,
+    HeadPoseMeasurement,
+    LEFT_CHEEK,
+    LEFT_EYE,
+    NOSE_TIP,
+    POSE_LANDMARKS,
+    RIGHT_CHEEK,
+    RIGHT_EYE,
+    eye_ratio,
+    measure_eyes,
+    measure_frame,
+    measure_head_pose,
+)
 from .session import EyeDetector, HeadPoseDetector, Settings, StudySession
 
 __all__ = [
+    "CHIN_BOTTOM",
     "CoachingRecord",
     "CoachingResult",
     "DEFAULT_BASE_MODEL_ID",
@@ -58,11 +74,17 @@ __all__ = [
     "EyeDetector",
     "EyeMeasurement",
     "Event",
+    "FOREHEAD_TOP",
     "FrameMeasurement",
     "HeadPoseDetector",
+    "HeadPoseMeasurement",
     "IGNORE_INDEX",
     "KoGPT2Coach",
+    "LEFT_CHEEK",
     "LEFT_EYE",
+    "NOSE_TIP",
+    "POSE_LANDMARKS",
+    "RIGHT_CHEEK",
     "RIGHT_EYE",
     "RuleBasedCoach",
     "SCHEMA_VERSION",
@@ -88,6 +110,7 @@ __all__ = [
     "load_coaching_jsonl",
     "measure_eyes",
     "measure_frame",
+    "measure_head_pose",
     "merge_intervals",
     "merged_interval_seconds",
     "save_coaching_jsonl",
