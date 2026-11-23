@@ -1,0 +1,23 @@
+{
+  "total_records": 96,
+  "assignees": {
+    "Saewoong0106": {
+      "record_count": 33,
+      "group_count": 11,
+      "jsonl_path": "data/review_batches/review_Saewoong0106.jsonl",
+      "markdown_path": "data/review_batches/review_Saewoong0106.md"
+    },
+    "nisuhyo": {
+      "record_count": 33,
+      "group_count": 11,
+      "jsonl_path": "data/review_batches/review_nisuhyo.jsonl",
+      "markdown_path": "data/review_batches/review_nisuhyo.md"
+    },
+    "suyeongim320": {
+      "record_count": 30,
+      "group_count": 10,
+      "jsonl_path": "data/review_batches/review_suyeongim320.jsonl",
+      "markdown_path": "data/review_batches/review_suyeongim320.md"
+    }
+  }
+}
