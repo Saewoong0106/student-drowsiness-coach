@@ -20,16 +20,24 @@ from study_coach.coaching import (
 )
 from study_coach.coaching_data import (
     IGNORE_INDEX,
+    SHORT_DEMO_PROFILES,
     build_seed_coaching_records,
+    build_short_demo_coaching_records,
+    build_short_demo_eval_scenarios,
+    classify_short_demo_profile,
     collate_causal_lm_batch,
     encode_causal_lm_sample,
+    evaluate_coaching_models,
     export_review_batches,
     extract_coaching_records_from_db,
     extract_coaching_records_from_json,
     mark_records_reviewed,
+    merge_and_validate_coaching_datasets,
     split_coaching_records,
     validate_coaching_dataset,
     validate_coaching_record,
+    verify_consecutive_demo_runs,
+    verify_no_dataset_leakage,
     verify_no_group_leakage,
 )
 from study_coach.contracts import FrameMeasurement, SessionSummary
@@ -358,6 +366,130 @@ class DatasetAndTrainingPipelineTests(unittest.TestCase):
             strict_report = validate_coaching_dataset(reviewed_96, require_reviewed=True)
             self.assertTrue(strict_report["valid"], strict_report["errors"])
             self.assertEqual(strict_report["reviewed_records"], 96)
+
+    def test_short_demo_records_cover_four_profiles_review_sheets_and_safe_merge(self):
+        short_records = build_short_demo_coaching_records(groups_per_profile=3, variants_per_group=3)
+        self.assertEqual(len(short_records), 36)
+
+        profiles_seen = set()
+        eye_counts_seen = set()
+        head_counts_seen = set()
+        for rec in short_records:
+            summary = rec.summary()
+            self.assertGreaterEqual(summary.study_seconds, 30.0)
+            self.assertLessEqual(summary.study_seconds, 180.0)
+            self.assertEqual(rec.source, "synthetic_short_demo")
+            self.assertFalse(rec.reviewed)
+            self.assertTrue(rec.is_synthetic)
+            prof = classify_short_demo_profile(summary)
+            profiles_seen.add(prof)
+            eye_counts_seen.add(summary.eye_closure_count)
+            head_counts_seen.add(summary.head_down_count)
+
+        self.assertEqual(profiles_seen, set(SHORT_DEMO_PROFILES))
+        self.assertGreaterEqual(len(eye_counts_seen), 4)
+        self.assertGreaterEqual(len(head_counts_seen), 4)
+
+        unreviewed_report = validate_coaching_dataset(short_records, require_reviewed=False)
+        self.assertTrue(unreviewed_report["valid"], unreviewed_report["errors"])
+        blocked_report = validate_coaching_dataset(short_records, require_reviewed=True)
+        self.assertFalse(blocked_report["valid"])
+
+        records_96 = build_seed_coaching_records(groups_per_scenario=4, variants_per_group=3)
+        reviewed_96 = mark_records_reviewed(records_96, reviewer="Saewoong0106")
+        reviewed_short = mark_records_reviewed(short_records, reviewer="Saewoong0106")
+
+        merged, merge_report = merge_and_validate_coaching_datasets(
+            {"canonical_96": reviewed_96, "short_demo_36": reviewed_short},
+            require_reviewed=True,
+        )
+        self.assertTrue(merge_report["valid"], merge_report["errors"])
+        self.assertEqual(len(merged), 132)
+        self.assertEqual(merge_report["origin_counts"], {"canonical_96": 96, "short_demo_36": 36})
+        self.assertEqual(set(merge_report["short_demo_profile_counts"].keys()), set(SHORT_DEMO_PROFILES))
+
+        splits = split_coaching_records(merged, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15)
+        self.assertEqual(verify_no_group_leakage(splits), [])
+        for split_name in ("train", "val", "test"):
+            split_short_profiles = {
+                classify_short_demo_profile(r.summary())
+                for r in splits[split_name]
+                if r.group_id.startswith("grp-short_demo-")
+            }
+            self.assertEqual(split_short_profiles, set(SHORT_DEMO_PROFILES))
+
+    def test_short_demo_eval_leakage_guard_and_fallback_excluded_from_lora_success(self):
+        train_candidates = build_short_demo_coaching_records(groups_per_profile=3, variants_per_group=3)
+        canonical_96 = build_seed_coaching_records(groups_per_scenario=4, variants_per_group=3)
+        eval_scenarios = build_short_demo_eval_scenarios(cases_per_profile=3)
+        self.assertEqual(len(eval_scenarios), 12)
+        self.assertEqual(verify_no_dataset_leakage(train_candidates + canonical_96, eval_scenarios), [])
+
+        # Intentional leakage must be rejected
+        with self.assertRaises(ValueError):
+            evaluate_coaching_models(
+                [train_candidates[0]],
+                {"rule": RuleBasedCoach()},
+                reference_records=train_candidates,
+            )
+
+        # Fallback outputs must NEVER count as LoRA generation success even though display_text has rule fallback
+        flaky_lora = KoGPT2Coach(
+            model_id="skt/kogpt2-base-v2+lora:test",
+            generator_fn=lambda _prompt, summary: (
+                generate_rule_coaching_text(summary)
+                if summary.eye_closure_count == 0
+                else f"눈 감김 의심 {summary.eye_closure_count + 2}회가 관찰되었습니다. 5분 휴식해 보세요."
+            ),
+        )
+        report = evaluate_coaching_models(
+            eval_scenarios,
+            {"lora": flaky_lora, "rule": RuleBasedCoach()},
+            reference_records=train_candidates + canonical_96,
+        )
+        self.assertTrue(report["leakage_verified"])
+        self.assertEqual(report["leakage_errors"], [])
+
+        lora_metrics = report["metrics"]["lora"]
+        # Only none + head_only (6 of 12) have eye_closure_count == 0; eye_only + both (6 of 12) fall back!
+        self.assertEqual(lora_metrics["generation_success_count"], 6)
+        self.assertAlmostEqual(lora_metrics["generation_success_rate"], 0.5)
+        self.assertEqual(lora_metrics["fallback_count"], 6)
+        self.assertAlmostEqual(lora_metrics["fallback_rate"], 0.5)
+        self.assertGreaterEqual(lora_metrics["p95_elapsed_seconds"], 0.0)
+        self.assertEqual(report["short_demo_profile_metrics"]["lora"]["none"]["generation_success_rate"], 1.0)
+        self.assertEqual(report["short_demo_profile_metrics"]["lora"]["both"]["generation_success_rate"], 0.0)
+
+    def test_consecutive_demo_runs_verification_passes_5_valid_and_fails_on_fallback(self):
+        good_lora = KoGPT2Coach(
+            model_id="skt/kogpt2-base-v2+lora:good",
+            generator_fn=lambda _prompt, summary: generate_rule_coaching_text(summary),
+        )
+        pass_report = verify_consecutive_demo_runs(coach=good_lora, target_consecutive=5)
+        self.assertTrue(pass_report["consecutive_target_met"])
+        self.assertEqual(pass_report["max_consecutive_successes"], 5)
+        self.assertEqual(pass_report["generation_success_count"], 5)
+        self.assertEqual(pass_report["fallback_count"], 0)
+
+        call_counter = {"n": 0}
+
+        def _fail_third(_prompt, summary):
+            call_counter["n"] += 1
+            if call_counter["n"] == 3:
+                return "집중도 99점입니다! 잠시 쉬세요."
+            return generate_rule_coaching_text(summary)
+
+        intermittent_lora = KoGPT2Coach(
+            model_id="skt/kogpt2-base-v2+lora:flaky",
+            generator_fn=_fail_third,
+        )
+        fail_report = verify_consecutive_demo_runs(coach=intermittent_lora, target_consecutive=5)
+        self.assertFalse(fail_report["consecutive_target_met"])
+        self.assertEqual(fail_report["max_consecutive_successes"], 2)
+        self.assertEqual(fail_report["generation_success_count"], 4)
+        self.assertEqual(fail_report["fallback_count"], 1)
+        self.assertTrue(fail_report["runs"][2]["is_fallback"])
+        self.assertFalse(fail_report["runs"][2]["genuine_generation_success"])
 
 
 class ContractHandoffAndEnvironmentTests(unittest.TestCase):

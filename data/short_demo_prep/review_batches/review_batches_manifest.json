@@ -1,0 +1,23 @@
+{
+  "total_records": 36,
+  "assignees": {
+    "Saewoong0106": {
+      "record_count": 12,
+      "group_count": 4,
+      "jsonl_path": "data/short_demo_prep/review_batches/review_Saewoong0106.jsonl",
+      "markdown_path": "data/short_demo_prep/review_batches/review_Saewoong0106.md"
+    },
+    "nisuhyo": {
+      "record_count": 12,
+      "group_count": 4,
+      "jsonl_path": "data/short_demo_prep/review_batches/review_nisuhyo.jsonl",
+      "markdown_path": "data/short_demo_prep/review_batches/review_nisuhyo.md"
+    },
+    "suyeongim320": {
+      "record_count": 12,
+      "group_count": 4,
+      "jsonl_path": "data/short_demo_prep/review_batches/review_suyeongim320.jsonl",
+      "markdown_path": "data/short_demo_prep/review_batches/review_suyeongim320.md"
+    }
+  }
+}

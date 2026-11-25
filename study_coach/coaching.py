@@ -74,6 +74,24 @@ def format_seconds_ko(seconds: float) -> str:
     return f"{secs}초"
 
 
+def _has_batchim(text: str) -> bool:
+    """Return True if the last Korean syllable or digit in text ends with a final consonant."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    ch = stripped[-1]
+    code = ord(ch)
+    if 0xAC00 <= code <= 0xD7A3:
+        return ((code - 0xAC00) % 28) != 0
+    if ch in "013678":
+        return True
+    return False
+
+
+def _josa(word: str, with_batchim: str, without_batchim: str) -> str:
+    return with_batchim if _has_batchim(word) else without_batchim
+
+
 def classify_scenario(summary_or_dict: SessionSummary | dict) -> str:
     """Classify a SessionSummary into one of the 8 canonical coaching scenarios."""
     summary = coerce_summary(summary_or_dict)
@@ -113,11 +131,15 @@ def format_coaching_prompt(summary_or_dict: SessionSummary | dict) -> str:
 
     window_parts = []
     for idx, window in enumerate(summary.windows, start=1):
-        start_m = int(round(window["start_s"] / 60))
-        end_m = int(round(window["end_s"] / 60))
         obs_w = format_seconds_ko(window["observable_seconds"])
         cnt_w = int(window["eye_closure_count"])
-        window_parts.append(f"{idx}구간({start_m}~{end_m}분, 관측 {obs_w}): 눈 감김 {cnt_w}회")
+        if float(window["end_s"]) < 60.0:
+            span_text = f"{format_seconds_ko(window['start_s'])}~{format_seconds_ko(window['end_s'])}"
+        else:
+            start_m = int(round(window["start_s"] / 60))
+            end_m = int(round(window["end_s"] / 60))
+            span_text = f"{start_m}~{end_m}분"
+        window_parts.append(f"{idx}구간({span_text}, 관측 {obs_w}): 눈 감김 {cnt_w}회")
     windows_line = " / ".join(window_parts) if window_parts else "구간 정보 없음"
 
     lines = [
@@ -185,12 +207,34 @@ def generate_rule_coaching_text(summary_or_dict: SessionSummary | dict) -> str:
             "다음 공부 시작 전 카메라 높이와 조명을 점검해 정면 보정을 다시 수행하고, 25분 단위로 자세와 화면 표시를 확인해 보세요."
         )
     elif scenario == "short_session":
-        interpretation = (
-            "짧은 시간 동안의 초기 관측 기록이므로 장시간 피로 추세를 판단하기에는 표본이 적습니다."
-        )
-        action = (
-            "다음에는 25~30분 단위로 목표 공부 시간을 설정하고 종료 후 5분간 짧은 휴식과 스트레칭을 계획해 보세요."
-        )
+        if eye_cnt > 0 and head_cnt > 0:
+            interpretation = (
+                "짧은 초기 관측 구간임에도 눈 감김 의심과 고개 숙임이 함께 나타나 현재 피로도와 학습 자세를 먼저 점검할 필요가 있습니다."
+            )
+            action = (
+                "무리해서 바로 연장하기보다 5~10분간 자리에서 일어나 환기·스트레칭으로 휴식하고, 정면 자세를 다시 보정한 뒤 20~25분 단위로 나누어 보세요."
+            )
+        elif eye_cnt > 0:
+            interpretation = (
+                "짧은 시간 동안의 초기 관측 기록이지만 지속 눈 감김 의심이 확인되어 눈의 피로나 조명·카메라 각도를 점검할 필요가 있습니다."
+            )
+            action = (
+                "다음 본 세션을 시작하기 전 5분간 눈을 쉬게 하며 수분을 보충하고, 이후 20~25분 단위로 짧게 목표 공부 시간을 계획해 보세요."
+            )
+        elif head_cnt > 0:
+            interpretation = (
+                "짧은 초기 세션에서 눈 감김 없이 고개 숙임이 기록되어 필기나 낮은 화면 각도로 고개를 숙인 자세가 이어진 것으로 보입니다."
+            )
+            action = (
+                "본격적인 공부에 들어가기 전 거치대나 독서대로 시선 높이를 조정하고, 가볍게 목 스트레칭으로 쉬어 준 뒤 25~30분 단위로 진행해 보세요."
+            )
+        else:
+            interpretation = (
+                "짧은 시간 동안의 초기 관측 기록이므로 장시간 피로 추세를 판단하기에는 표본이 적습니다."
+            )
+            action = (
+                "다음에는 25~30분 단위로 목표 공부 시간을 설정하고 종료 후 5분간 짧은 휴식과 스트레칭을 계획해 보세요."
+            )
     elif scenario == "late_increase":
         first_cnt = summary.windows[0]["eye_closure_count"] if summary.windows else 0
         last_cnt = summary.windows[-1]["eye_closure_count"] if summary.windows else eye_cnt
@@ -264,10 +308,12 @@ def generate_diverse_coaching_text(summary_or_dict: SessionSummary | dict, varia
         fact = zero_facts[variant_index % len(zero_facts)]
     else:
         obs_ratio_pct = (summary.observable_seconds / summary.study_seconds * 100.0) if summary.study_seconds > 0 else 0.0
+        obs_copula = _josa(obs_ko, "이었으며", "였으며")
+        obs_subj = _josa(obs_ko, "이", "가")
         normal_facts = (
-            f"'{goal_name}' 공부 {study_ko}(휴식 {break_ko}) 중 유효 관측 시간은 {obs_ko}(관측률 {obs_ratio_pct:.0f}%, 미측정 {unobs_ko})였으며, 눈 감김 의심은 {eye_cnt}회(누적 {eye_sec}초), 고개 숙임은 {head_cnt}회 발생했습니다.",
+            f"'{goal_name}' 공부 {study_ko}(휴식 {break_ko}) 중 유효 관측 시간은 {obs_ko}(관측률 {obs_ratio_pct:.0f}%, 미측정 {unobs_ko}){obs_copula}, 눈 감김 의심은 {eye_cnt}회(누적 {eye_sec}초), 고개 숙임은 {head_cnt}회 발생했습니다.",
             f"이번 '{goal_name}' 세션에서는 총 {study_ko} 공부하고 {break_ko} 쉬었으며, 관측 가능 구간 {obs_ko}(미측정 {unobs_ko}) 동안 눈 감김 의심 {eye_cnt}회({eye_sec}초)와 고개 숙임 이벤트 {head_cnt}회가 확인되었습니다.",
-            f"'{goal_name}' 목표 세션 집계 결과, 공부 시간 {study_ko}·휴식 시간 {break_ko} 중 {obs_ko}가 정상 관측(미측정 {unobs_ko})되었고 눈 감김 의심 {eye_cnt}회(총 {eye_sec}초) 및 고개 숙임 {head_cnt}회가 측정되었습니다.",
+            f"'{goal_name}' 목표 세션 집계 결과, 공부 시간 {study_ko}·휴식 시간 {break_ko} 중 {obs_ko}{obs_subj} 정상 관측(미측정 {unobs_ko})되었고 눈 감김 의심 {eye_cnt}회(총 {eye_sec}초) 및 고개 숙임 {head_cnt}회가 측정되었습니다.",
         )
         fact = normal_facts[variant_index % len(normal_facts)]
 
@@ -280,19 +326,53 @@ def generate_diverse_coaching_text(summary_or_dict: SessionSummary | dict, varia
         actions = (
             "다음 학습 전에는 카메라 렌즈 높이와 책상 조명을 다시 조정하고 10초 정면 보정을 마친 뒤 30분 단위로 학습을 계획해 보세요.",
             "얼굴 정면이 화면 중앙에 보이도록 거치대 위치를 점검하고, 잠시 5분간 스트레칭으로 휴식한 후 세션을 다시 시작해 보세요.",
-            "안경 반사나 손으로 턱을 괴는 자세가 카메라는 가리지 않는지 점검하고, 정면 보정을 새로 수행해 관측 안정성을 유지해 보세요.",
+            "안경 반사나 손으로 턱을 괴는 자세가 카메라를 가리지 않는지 점검하고, 정면 보정을 새로 수행해 관측 안정성을 유지해 보세요.",
         )
     elif scenario == "short_session":
-        interps = (
-            "전체 공부 시간이 15분 미만으로 짧아 장시간 집중 흐름이나 피로 누적 여부를 판단하기에는 아직 초기 단계입니다.",
-            "짧은 탐색 또는 초기 점검 성격의 세션으로 보이며, 현재까지는 급격한 졸음 징후 없이 워밍업을 마친 상태입니다.",
-            "관측된 시간이 짧아 현재 수치만으로 피로도를 평가하기 어렵지만, 본격적인 공부 구간으로 넘어가기 좋은 시점입니다.",
-        )
-        actions = (
-            "다음 세션은 25분 집중 공부와 5분 휴식을 한 묶음으로 계획하여 일정한 학습 리듬을 유지해 보세요.",
-            "목표 분량을 30분 단위로 나누어 이어서 진행하고, 한 구간이 끝날 때마다 가벼운 목 스트레칭으로 쉬어 보세요.",
-            "본격적인 학습에 들어가기 전 자세와 화면 각도를 한 번 더 점검하고, 25~30분 연속 공부 후 짧은 휴식을 실천해 보세요.",
-        )
+        if eye_cnt > 0 and head_cnt > 0:
+            interps = (
+                "전체 공부 시간은 짧지만 눈 감김 의심과 고개 숙임이 동시에 기록되어 초기 피로나 흐트러진 착석 자세가 함께 나타난 양상입니다.",
+                "짧은 점검 구간 안에서 지속 눈 감김과 고개 숙임 이벤트가 모두 확인되어 현재 컨디션과 책상 시선 각도를 함께 살필 필요가 있습니다.",
+                "관측 시간은 짧더라도 눈 감김 의심과 자세 숙임이 복합적으로 포착되어 무리하게 이어가면 초반 집중 흐름이 흔들릴 수 있습니다.",
+            )
+            actions = (
+                "본격적인 공부를 시작하기 전에 5~10분간 환기하며 눈과 목을 쉬게 하고, 정면 보정 후 20~25분 단위로 짧게 학습을 나누어 보세요.",
+                "자리에서 일어나 가벼운 스트레칭과 수분 보충으로 휴식한 뒤, 거치대 높이를 조정하고 25분 집중·5분 휴식 계획으로 조절해 보세요.",
+                "지금 바로 화면 높이와 조명을 다시 점검해 자세 부담을 줄이고, 5분 휴식 뒤 20분 단위의 짧은 구간부터 차분히 재개해 보세요.",
+            )
+        elif eye_cnt > 0:
+            interps = (
+                "전체 공부 시간은 짧지만 초반부터 지속 눈 감김 의심이 포착되어 눈의 피로나 졸음 신호가 이르게 나타난 상태로 보입니다.",
+                "짧은 학습 구간임에도 2초 이상 이어진 눈 감김 이벤트가 확인되어 컨디션 저하 또는 하방 시선·조명 영향을 점검할 필요가 있습니다.",
+                "초기 관측 구간에서 지속적인 눈 감김 의심이 기록되어 휴식 없이 긴 세션으로 바로 넘어가면 피로가 빠르게 누적될 수 있습니다.",
+            )
+            actions = (
+                "다음 세션을 시작하기 전 5~10분간 먼 곳을 보거나 눈을 감고 쉬어 준 뒤, 공부 구간을 20~25분 단위로 짧게 계획해 보세요.",
+                "잠시 자리에서 일어나 찬물을 마시거나 실내를 환기하며 휴식하고, 정면 보정을 다시 확인한 뒤 짧은 집중 구간으로 나누어 보세요.",
+                "조명 반사나 화면 위치를 점검한 후 5분간 가볍게 스트레칭하며 쉬고, 알림음을 켜 둔 채 25분 단위로 학습 리듬을 조절해 보세요.",
+            )
+        elif head_cnt > 0:
+            interps = (
+                "짧은 학습 구간 동안 눈 감김 의심은 없었으나 고개 숙임이 기록되어, 교재 필기나 낮은 시선 각도로 고개를 숙인 상태가 이어진 것으로 보입니다.",
+                "초기 세션에서 졸음성 눈 감김보다 3초 이상 지속된 고개 숙임이 먼저 나타나 책상·화면 높이로 인한 목 부담을 점검할 시점입니다.",
+                "관측 구간이 짧은 편이지만 고개를 아래로 숙이는 자세가 반복되어 장시간 이어질 경우 목과 어깨 긴장이 쌓일 가능성이 있습니다.",
+            )
+            actions = (
+                "본격적인 학습에 들어가기 전 독서대나 노트북 거치대로 시선 높이를 올리고, 가볍게 목 스트레칭으로 쉬어 준 뒤 25~30분 단위로 진행해 보세요.",
+                "고개를 20도 이상 깊이 숙이지 않도록 교재 위치를 조정하고, 5분간 어깨와 목 근육을 풀어 준 뒤 다음 목표 구간을 계획해 보세요.",
+                "정면 자세를 한 번 더 보정해 바른 착석 각도를 유지하고, 이후에는 30분마다 자세를 펴며 짧은 휴식을 실천해 보세요.",
+            )
+        else:
+            interps = (
+                "전체 공부 시간이 15분 미만으로 짧아 장시간 집중 흐름이나 피로 누적 여부를 판단하기에는 아직 초기 단계입니다.",
+                "짧은 탐색 또는 초기 점검 성격의 세션으로 보이며, 현재까지는 급격한 졸음 징후 없이 워밍업을 마친 상태입니다.",
+                "관측된 시간이 짧아 현재 수치만으로 피로도를 평가하기 어렵지만, 본격적인 공부 구간으로 넘어가기 좋은 시점입니다.",
+            )
+            actions = (
+                "다음 세션은 25분 집중 공부와 5분 휴식을 한 묶음으로 계획하여 일정한 학습 리듬을 유지해 보세요.",
+                "목표 분량을 30분 단위로 나누어 이어서 진행하고, 한 구간이 끝날 때마다 가벼운 목 스트레칭으로 쉬어 보세요.",
+                "본격적인 학습에 들어가기 전 자세와 화면 각도를 한 번 더 점검하고, 25~30분 연속 공부 후 짧은 휴식을 실천해 보세요.",
+            )
     elif scenario == "late_increase":
         first_cnt = summary.windows[0]["eye_closure_count"] if summary.windows else 0
         last_cnt = summary.windows[-1]["eye_closure_count"] if summary.windows else eye_cnt
@@ -622,19 +702,34 @@ class KoGPT2Coach:
                 if self.adapter_path is not None and (self.adapter_path / "tokenizer.json").is_file()
                 else base_id
             )
-            self.tokenizer = PreTrainedTokenizerFast.from_pretrained(
-                tokenizer_source,
+            tok_kwargs = dict(
                 bos_token="</s>",
                 eos_token="</s>",
                 unk_token="<unk>",
                 pad_token="<pad>",
                 mask_token="<mask>",
             )
-            base_model = AutoModelForCausalLM.from_pretrained(base_id)
+            try:
+                self.tokenizer = PreTrainedTokenizerFast.from_pretrained(
+                    tokenizer_source, local_files_only=True, **tok_kwargs
+                )
+            except OSError:
+                self.tokenizer = PreTrainedTokenizerFast.from_pretrained(
+                    tokenizer_source, **tok_kwargs
+                )
+            try:
+                base_model = AutoModelForCausalLM.from_pretrained(base_id, local_files_only=True)
+            except OSError:
+                base_model = AutoModelForCausalLM.from_pretrained(base_id)
             if self.adapter_path is not None:
                 from peft import PeftModel
 
-                base_model = PeftModel.from_pretrained(base_model, str(self.adapter_path))
+                try:
+                    base_model = PeftModel.from_pretrained(
+                        base_model, str(self.adapter_path), local_files_only=True
+                    )
+                except TypeError:
+                    base_model = PeftModel.from_pretrained(base_model, str(self.adapter_path))
             base_model.to(self.device)
             base_model.eval()
             self.model = base_model

@@ -11,11 +11,14 @@ if str(ROOT) not in sys.path:
 
 from study_coach.coaching_data import (
     build_seed_coaching_records,
+    build_short_demo_coaching_records,
+    build_short_demo_eval_scenarios,
     export_review_batches,
     extract_coaching_records_from_db,
     extract_coaching_records_from_json,
     load_coaching_jsonl,
     mark_records_reviewed,
+    merge_and_validate_coaching_datasets,
     save_coaching_jsonl,
     split_coaching_records,
     validate_coaching_dataset,
@@ -25,7 +28,7 @@ from study_coach.coaching_data import (
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="코칭 학습 데이터(JSONL) 시드/실측 추출, 무결성 검증, 팀원 검수 배분, 그룹 단위 분할 도구"
+        description="코칭 학습 데이터(JSONL) 시드/짧은 시연/실측 추출, 무결성·중복 검증, 팀원 검수 배분, 그룹 단위 분할 도구"
     )
     parser.add_argument(
         "--generate-seed",
@@ -34,6 +37,34 @@ def parse_args(argv=None):
     )
     parser.add_argument("--groups-per-scenario", type=int, default=3)
     parser.add_argument("--variants-per-group", type=int, default=2)
+    parser.add_argument(
+        "--generate-short-demo",
+        type=Path,
+        help="30초~3분 짧은 시연용 코칭 후보 JSONL 생성 경로 (source='synthetic_short_demo', reviewed=False)",
+    )
+    parser.add_argument(
+        "--groups-per-profile",
+        type=int,
+        default=3,
+        help="--generate-short-demo 시 4개 이벤트 조합(none/eye_only/head_only/both)당 생성할 그룹 수 (기본 3)",
+    )
+    parser.add_argument(
+        "--generate-short-demo-eval",
+        type=Path,
+        help="학습 데이터와 분리된 30초~3분 시연 평가 전용 시나리오 JSONL 생성 경로",
+    )
+    parser.add_argument(
+        "--eval-cases-per-profile",
+        type=int,
+        default=3,
+        help="--generate-short-demo-eval 시 조합당 생성할 독립 평가 시나리오 수 (기본 3)",
+    )
+    parser.add_argument(
+        "--merge",
+        nargs="+",
+        type=Path,
+        help="여러 코칭 JSONL 파일(예: 기존 96건 검수본 + 추가 시연 검수본)을 교차 중복·수치 검증 후 병합",
+    )
     parser.add_argument(
         "--from-db",
         type=Path,
@@ -53,12 +84,18 @@ def parse_args(argv=None):
     parser.add_argument(
         "--output",
         type=Path,
-        help="--from-db, --from-json, --mark-reviewed 결과를 저장할 JSONL 파일 경로",
+        help="--from-db, --from-json, --merge, --mark-reviewed 결과를 저장할 JSONL 파일 경로",
     )
     parser.add_argument(
         "--assign-review",
         type=Path,
-        help="검증/생성된 데이터를 팀원 3명(Saewoong0106, nisuhyo, suyeongim320) 검수 시트로 배분할 폴더 경로",
+        help="검증/생성된 데이터를 팀원 검수 시트로 배분할 폴더 경로",
+    )
+    parser.add_argument(
+        "--assignees",
+        nargs="+",
+        default=["Saewoong0106", "nisuhyo", "suyeongim320"],
+        help="--assign-review 시 배분할 검수자 목록 (기본: Saewoong0106 nisuhyo suyeongim320)",
     )
     parser.add_argument(
         "--mark-reviewed",
@@ -94,6 +131,9 @@ def main(argv=None) -> int:
     has_action = any(
         (
             args.generate_seed,
+            args.generate_short_demo,
+            args.generate_short_demo_eval,
+            args.merge,
             args.from_db,
             args.from_json,
             args.mark_reviewed,
@@ -104,7 +144,7 @@ def main(argv=None) -> int:
     )
     if not has_action:
         print(
-            "실행할 작업을 지정하세요 (--generate-seed, --from-db, --from-json, --mark-reviewed, --assign-review, --validate, --split).",
+            "실행할 작업을 지정하세요 (--generate-seed, --generate-short-demo, --generate-short-demo-eval, --merge, --from-db, --from-json, --mark-reviewed, --assign-review, --validate, --split).",
             file=sys.stderr,
         )
         return 2
@@ -139,7 +179,55 @@ def main(argv=None) -> int:
                 f"코칭 데이터 생성 완료: {out_path} (총 {len(combined)}건 = 실측 추출 {len(generated_records)}건 + 시나리오 생성 {len(seed_records)}건)"
             )
             generated_records = combined
-        elif generated_records and args.output:
+
+        if args.generate_short_demo:
+            short_records = build_short_demo_coaching_records(
+                groups_per_profile=args.groups_per_profile,
+                variants_per_group=args.variants_per_group,
+            )
+            out_path = save_coaching_jsonl(short_records, args.generate_short_demo)
+            print(
+                f"짧은 시연용 코칭 후보 생성 완료: {out_path} ({len(short_records)}건, 30~180초, source=synthetic_short_demo)"
+            )
+            generated_records = short_records
+
+        if args.generate_short_demo_eval:
+            eval_records = build_short_demo_eval_scenarios(
+                cases_per_profile=args.eval_cases_per_profile,
+            )
+            out_path = save_coaching_jsonl(eval_records, args.generate_short_demo_eval)
+            print(
+                f"짧은 시연 독립 평가 시나리오 생성 완료: {out_path} ({len(eval_records)}건, 30~180초)"
+            )
+
+        if args.merge:
+            named_inputs = {}
+            for merge_path in args.merge:
+                rows = [
+                    json.loads(line)
+                    for line in Path(merge_path).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                named_inputs[str(merge_path)] = rows
+            merged_records, merge_report = merge_and_validate_coaching_datasets(
+                named_inputs,
+                require_reviewed=args.require_reviewed,
+            )
+            print(json.dumps(merge_report, ensure_ascii=False, indent=2))
+            if not merge_report["valid"]:
+                print("병합 교차 검증(중복 ID/세션·그룹 충돌·수치 규칙)에 실패했습니다.", file=sys.stderr)
+                return 1
+            if args.output:
+                out_path = save_coaching_jsonl(merged_records, args.output)
+                print(f"병합 코칭 데이터 저장 완료: {out_path} (총 {len(merged_records)}건)")
+            generated_records = merged_records
+        elif (
+            generated_records
+            and args.output
+            and not args.generate_seed
+            and not args.generate_short_demo
+            and not args.mark_reviewed
+        ):
             out_path = save_coaching_jsonl(generated_records, args.output)
             print(f"실측 코칭 데이터 저장 완료: {out_path} ({len(generated_records)}건)")
 
@@ -151,14 +239,24 @@ def main(argv=None) -> int:
             print(f"검수 완료 처리(reviewed=True, reviewer={args.reviewer}): {target_out} ({len(marked)}건)")
 
         if args.assign_review:
-            source_file = args.generate_seed or args.output or args.validate or args.split
+            source_file = (
+                args.generate_short_demo
+                or args.generate_seed
+                or args.output
+                or args.validate
+                or args.split
+            )
             records_for_review = generated_records if generated_records else (
                 load_coaching_jsonl(source_file) if source_file else []
             )
             if not records_for_review:
-                print("--assign-review를 실행하려면 입력 데이터(--generate-seed, --validate 등)가 필요합니다.", file=sys.stderr)
+                print("--assign-review를 실행하려면 입력 데이터(--generate-seed, --generate-short-demo, --validate 등)가 필요합니다.", file=sys.stderr)
                 return 2
-            batch_info = export_review_batches(records_for_review, args.assign_review)
+            batch_info = export_review_batches(
+                records_for_review,
+                args.assign_review,
+                assignees=tuple(args.assignees),
+            )
             print(f"팀원별 검수 시트 배분 완료: {args.assign_review} (총 {batch_info['total_records']}건)")
             for owner, info in batch_info["assignees"].items():
                 print(f"  - {owner}: {info['record_count']}건 ({info['group_count']}개 그룹) -> {info['markdown_path']}")
