@@ -195,6 +195,9 @@ def measure_head_pose(
     )
 
 
+DEEP_HEAD_DOWN_OCCLUSION_DEG = 35.0
+
+
 def measure_frame(
     session_id: str,
     timestamp_s: float,
@@ -235,6 +238,14 @@ def measure_frame(
                 pose_valid = pose_output.pose_valid
             if hasattr(pose_output, "invalid_reason"):
                 pose_reason = pose_output.invalid_reason
+    if (
+        eye.average is not None
+        and pose_valid is not False
+        and pitch_delta_deg is not None
+        and isfinite(pitch_delta_deg)
+        and float(pitch_delta_deg) >= DEEP_HEAD_DOWN_OCCLUSION_DEG
+    ):
+        eye = EyeMeasurement(None, None, "head_down_eye_occluded")
     if invalid_reason is None:
         invalid_reason = eye.reason if eye.reason is not None else pose_reason
     return eye.to_frame_measurement(

@@ -82,7 +82,7 @@ class EyeDetector:
         self.last_time = None
         self.state = "unobservable"
 
-    def update(self, t, ear, baseline):
+    def update(self, t, ear, baseline, *, pitch_delta_deg=None):
         if not _is_finite_number(t) or t < 0 or (self.last_time is not None and t < self.last_time):
             raise ValueError("Timestamps must not decrease")
         t = float(t)
@@ -95,8 +95,12 @@ class EyeDetector:
             return False
         ear = float(ear)
         self.last_valid = t
-        low = baseline * self.settings.close_ratio
-        high = baseline * self.settings.open_ratio
+        pitch_relief = 1.0
+        if pitch_delta_deg is not None and _is_finite_number(pitch_delta_deg) and float(pitch_delta_deg) > 5.0:
+            excess_pitch = min(30.0, float(pitch_delta_deg) - 5.0)
+            pitch_relief = max(0.75, 1.0 - 0.008 * excess_pitch)
+        low = baseline * self.settings.close_ratio * pitch_relief
+        high = baseline * self.settings.open_ratio * pitch_relief
         if self.active:
             if ear >= high:
                 if self.recovery is None:
@@ -412,13 +416,13 @@ class StudySession:
                         "pitch_baseline": self.pitch_baseline,
                         "samples": len(self.calibration_values),
                     })
-                    self.detector.update(t, ear, baseline)
+                    self.detector.update(t, ear, baseline, pitch_delta_deg=pitch)
                     self.head_detector.update(t, pitch, pose_valid=valid_pose)
                 else:
                     self._clear_calibration()
                     self.calibration_message = "retry_eyes_open" if enough else "retry_face_visible"
             return False
-        eye_alarm = self.detector.update(t, ear, self.baseline)
+        eye_alarm = self.detector.update(t, ear, self.baseline, pitch_delta_deg=pitch)
         head_alarm = self.head_detector.update(t, pitch, pose_valid=valid_pose)
         self.last_triggered = {"eye_closure_suspected": eye_alarm, "head_down": head_alarm}
         return bool(eye_alarm or head_alarm)
@@ -463,12 +467,12 @@ class StudySession:
     def state(self):
         if self.phase != "studying":
             return self.phase
-        if self.detector.state == "unobservable":
-            return "unobservable"
-        if self.detector.state != "normal":
+        if self.detector.state not in ("normal", "unobservable"):
             return self.detector.state
         if self.head_detector.state in ("head_down", "bending", "recovering"):
             return self.head_detector.state
+        if self.detector.state == "unobservable":
+            return "unobservable"
         return "normal"
 
     @property
