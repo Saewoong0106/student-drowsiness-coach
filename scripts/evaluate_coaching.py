@@ -19,17 +19,36 @@ from study_coach.coaching import (
 from study_coach.coaching_data import (
     build_blind_evaluation_sheet,
     build_seed_coaching_records,
+    build_short_demo_eval_scenarios,
     evaluate_coaching_models,
     load_coaching_jsonl,
     split_coaching_records,
+    verify_consecutive_demo_runs,
 )
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="기본 KoGPT2 · LoRA 미세 튜닝 모델 · 규칙 기반 코칭 비교 평가 및 블라인드 평가표 생성"
+        description="기본 KoGPT2 · LoRA 미세 튜닝 모델 · 규칙 기반 코칭 비교 평가, 데이터 누수 검사 및 5회 연속 시연 검증"
     )
     parser.add_argument("--test-file", type=Path, help="평가할 test.jsonl 경로 (생략 시 시드 데이터의 test 분할 사용)")
+    parser.add_argument(
+        "--short-demo-eval",
+        action="store_true",
+        help="30초~3분 독립 짧은 시연 평가 시나리오(12건, 4개 조합)로 평가 수행",
+    )
+    parser.add_argument(
+        "--reference-files",
+        nargs="+",
+        type=Path,
+        help="평가 데이터와의 ID·그룹·세션·입력 수치 누출(leakage) 부재를 검증할 train/val JSONL 경로 목록",
+    )
+    parser.add_argument(
+        "--verify-demo-runs",
+        type=int,
+        default=0,
+        help="Issue #12 최종 시연 대비: 임시 SQLite DB로 N회(예: 5) 연속 전체 흐름 및 실제 LoRA 비-fallback 성공 검증",
+    )
     parser.add_argument(
         "--lora-path",
         type=Path,
@@ -93,12 +112,24 @@ def main(argv=None) -> int:
     try:
         if args.test_file:
             test_records = load_coaching_jsonl(args.test_file)
+        elif args.short_demo_eval:
+            test_records = build_short_demo_eval_scenarios(cases_per_profile=3)
         else:
             seed_records = build_seed_coaching_records(groups_per_scenario=3, variants_per_group=2)
             test_records = split_coaching_records(seed_records)["test"]
 
+        reference_records = None
+        if args.reference_files:
+            reference_records = []
+            for ref_path in args.reference_files:
+                reference_records.extend(load_coaching_jsonl(ref_path))
+
         coaches = _build_coaches(args)
-        report = evaluate_coaching_models(test_records, coaches)
+        report = evaluate_coaching_models(
+            test_records,
+            coaches,
+            reference_records=reference_records,
+        )
         blind_sheet, answer_key = build_blind_evaluation_sheet(report)
 
         out_dir = Path(args.output_dir)
@@ -113,6 +144,19 @@ def main(argv=None) -> int:
 
         print(f"코칭 비교 평가 완료 ({report['total_records']}건): {summary_path}")
         print(json.dumps(report["metrics"], ensure_ascii=False, indent=2))
+
+        if args.verify_demo_runs and args.verify_demo_runs > 0:
+            demo_report = verify_consecutive_demo_runs(
+                coach=coaches["lora"],
+                mode="lora",
+                adapter_path=args.lora_path,
+                target_consecutive=args.verify_demo_runs,
+            )
+            demo_path = out_dir / "consecutive_demo_report.json"
+            demo_path.write_text(json.dumps(demo_report, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(
+                f"연속 시연 검증 완료 (목표 {demo_report['target_consecutive']}회, 최대 연속 {demo_report['max_consecutive_successes']}회, 통과={demo_report['consecutive_target_met']}): {demo_path}"
+            )
     except Exception as exc:
         print(f"코칭 평가 실패: {exc}", file=sys.stderr)
         return 1
