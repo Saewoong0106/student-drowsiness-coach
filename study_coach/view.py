@@ -64,7 +64,7 @@ class SessionView:
             "bending": "고개 숙임 확인 중",
             "head_down": "고개 숙임 · 3초 이상 지속",
             "recovering": "눈·자세 회복 확인 중",
-            "unobservable": "측정 불가 · 얼굴과 눈을 확인해 주세요",
+            "unobservable": "측정 불가 · 공부 시간은 유지되며 미측정으로 기록 중",
         }
         label = labels.get(state, state.replace("_", " ").title()) if self.korean else state.replace("_", " ").title()
         color = (255, 120, 105) if state in ("eyes_closed", "head_down") else (130, 225, 170)
@@ -80,16 +80,28 @@ class SessionView:
             if not self.korean:
                 hint = f"Calibration: {remaining:.1f}s remaining. Keep eyes open."
         else:
-            hint = f"공부 {duration(snapshot['study_seconds'])}   휴식 {duration(snapshot['break_seconds'])}   미측정 {duration(snapshot['unobservable_seconds'])}"
+            hint = (
+                f"공부 {duration(snapshot['study_seconds'])}   "
+                f"관측 {duration(snapshot['observable_seconds'])}   "
+                f"미측정 {duration(snapshot['unobservable_seconds'])}   "
+                f"휴식 {duration(snapshot['break_seconds'])}"
+            )
             if not self.korean:
-                hint = f"Study {duration(snapshot['study_seconds'])} | Break {duration(snapshot['break_seconds'])} | Unknown {duration(snapshot['unobservable_seconds'])}"
+                hint = (
+                    f"Study {duration(snapshot['study_seconds'])} | "
+                    f"Obs {duration(snapshot['observable_seconds'])} | "
+                    f"Unknown {duration(snapshot['unobservable_seconds'])} | "
+                    f"Break {duration(snapshot['break_seconds'])}"
+                )
         draw.text((18, y + 43), hint, font=self.small, fill=(235, 235, 235))
         value = "--" if measurement.average is None else f"{measurement.average:.3f}"
         baseline = "--" if session.baseline is None else f"{session.baseline:.3f}"
         ratio = "--" if session.baseline is None or measurement.average is None else f"{100 * measurement.average / session.baseline:.0f}%"
-        details = f"EAR {value}   기준 {baseline}   평소 대비 {ratio}   {fps:.1f} FPS"
+        pitch_kr = "--" if session.pitch_delta_deg is None else f"{session.pitch_delta_deg:+.0f}°"
+        pitch_en = "--" if session.pitch_delta_deg is None else f"{session.pitch_delta_deg:+.0f}deg"
+        details = f"EAR {value}   기준 {baseline}   평소 대비 {ratio}   고개 {pitch_kr}   {fps:.1f} FPS"
         if not self.korean:
-            details = f"EAR {value} | Baseline {baseline} | Relative {ratio} | {fps:.1f} FPS"
+            details = f"EAR {value} | Baseline {baseline} | Relative {ratio} | Pitch {pitch_en} | {fps:.1f} FPS"
         draw.text((18, y + 76), details, font=self.small, fill=(235, 235, 235))
         head_count = snapshot.get("head_down_count", 0)
         head_seconds = snapshot.get("head_down_seconds", 0.0)

@@ -803,6 +803,36 @@ class VisionHeadPoseAndSessionTests(unittest.TestCase):
         self.assertAlmostEqual(session.head_detector.events[1].ended_s, 9.3)
         self.assertEqual(session.head_detector.events[1].interrupted_reason, "unobservable")
 
+    def test_writing_posture_keeps_study_time_and_avoids_false_eye_closure(self):
+        session = calibrated()
+        # 1. Writing posture (pitch +25 deg) with slightly foreshortened open eyes (EAR 0.18 = 60% of 0.30 baseline)
+        # Frontal threshold is 0.195 (65%), but pitch-compensated threshold is ~0.164, so no false eye-closure alarm.
+        for i in range(11, 45):
+            session.step(i / 10, 0.18, 25.0, pose_valid=True)
+        self.assertEqual(len(session.detector.events), 0)
+        self.assertEqual(len(session.head_detector.events), 1)
+        self.assertEqual(session.state, "head_down")
+
+        # 2. Deep head bow (pitch +38 deg >= 35 deg): eyes become self-occluded, head_down and study_seconds continue
+        before_study = session.study_seconds
+        before_unobs = session.unobservable_seconds
+        for i in range(45, 56):
+            t = round(i / 10.0, 2)
+            lm = make_face_landmarks(pitch_deg=38.0, eye_open=False)
+            frame = measure_frame(session.session_id, t, lm, 640, 480, pose_measurer=session.pose_measurer)
+            self.assertFalse(frame.eye_valid)
+            self.assertTrue(frame.pose_valid)
+            self.assertEqual(frame.invalid_reason, "head_down_eye_occluded")
+            session.step_measurement(frame)
+        self.assertEqual(len(session.detector.events), 0)
+        self.assertEqual(session.state, "head_down")
+        self.assertGreater(session.study_seconds, before_study + 1.0)
+        self.assertGreater(session.unobservable_seconds, before_unobs + 1.0)
+        self.assertAlmostEqual(
+            session.study_seconds,
+            session.observable_seconds + session.unobservable_seconds,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
